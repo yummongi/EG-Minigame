@@ -1,0 +1,25 @@
+name: EGServer
+version: 1.0
+main: kr.egsuv.EGServerMain
+commands:
+  스폰:
+    description: Teleport to spawn.
+    usage: /스폰
+  spawn:
+    description: Teleport to spawn.
+    usage: /spawn
+  시간:
+    description: Set the time.
+    usage: /시간 <value>
+  time:
+    description: Set the time.
+    usage: /time <value>
+  확성기:
+    description: Send a message to all players via action bar.
+    usage: /확성기 <message>
+  메아리:
+    description: Send a message to all players via action bar.
+    usage: /메아리 <message>
+  megaphone:
+    description: Send a message to all players via action bar.
+    usage: /megaphone <message>
