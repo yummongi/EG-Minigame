@@ -1,24 +1,27 @@
 package kr.egsuv.commands.commandList;
 
 import kr.egsuv.EGServerMain;
-import kr.egsuv.chat.Rank;
+import kr.egsuv.chat.Prefix;
 import kr.egsuv.commands.Command;
-import kr.egsuv.minigames.MiniGamesGui;
+import kr.egsuv.minigames.Minigame;
+import kr.egsuv.minigames.MinigameGui;
 import kr.egsuv.util.PotionUtils;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.WeatherType;
+import org.bukkit.boss.BossBar;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.PlayerInventory;
+import org.bukkit.metadata.FixedMetadataValue;
 import org.bukkit.potion.PotionEffectType;
 
 
 public class SpawnCommand implements Command {
 
     private final EGServerMain plugin = EGServerMain.getInstance();
-    private MiniGamesGui miniGamesGui;
+    private MinigameGui miniGamesGui;
 
-    public SpawnCommand(MiniGamesGui miniGamesGui) {
+    public SpawnCommand(MinigameGui miniGamesGui) {
         this.miniGamesGui = miniGamesGui;
     }
 
@@ -29,9 +32,6 @@ public class SpawnCommand implements Command {
             return true;
         }
 
-        plugin.setPlayerList(player, "로비");
-        initPlayerState(player);
-        initPlayerInventory(player);
         teleportToSpawn(player);
         return true;
     }
@@ -40,7 +40,6 @@ public class SpawnCommand implements Command {
         if (player.isOp()) {
             player.setGameMode(GameMode.CREATIVE);
             player.setAllowFlight(true);
-            player.setSneaking(true);
         } else {
             player.setGameMode(GameMode.SURVIVAL);
             player.setAllowFlight(false);
@@ -56,6 +55,9 @@ public class SpawnCommand implements Command {
         player.setGravity(true);
         player.setPlayerWeather(WeatherType.CLEAR);
         PotionUtils.applyPotionEffect(player, PotionEffectType.REGENERATION, 72000, 1);
+
+        // 무적 모드 해제
+        player.setInvulnerable(false);
     }
 
     private void initPlayerInventory(Player player) {
@@ -74,10 +76,22 @@ public class SpawnCommand implements Command {
     private void setSpawnLocation(Player player) {
         Location location = player.getLocation();
         plugin.getSpawnConfigManager().setSpawnLocation(location);
-        player.sendMessage(Rank.SERVER + "§f현재 위치로 §c스폰 설정§f이 완료 되었습니다.");
+        player.sendMessage(Prefix.SERVER + "§f현재 위치로 §c스폰 설정§f이 완료 되었습니다.");
     }
 
     public boolean teleportToSpawn(Player player) {
+
+        for (Minigame minigame : plugin.getMinigameList()) {
+            if (minigame.getPlayers().contains(player)) {
+                minigame.gameQuitPlayer(player);
+                if (minigame.getBossBar() != null) {
+                    minigame.getBossBar().removePlayer(player);
+                }
+                break;
+            }
+        }
+        initPlayer(player);
+        plugin.setPlayerList(player, "로비");
         return player.teleport(plugin.getSpawnConfigManager().getSpawnLocation());
     }
 }

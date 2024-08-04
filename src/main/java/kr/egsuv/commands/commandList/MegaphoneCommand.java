@@ -1,7 +1,7 @@
 package kr.egsuv.commands.commandList;
 
 import kr.egsuv.EGServerMain;
-import kr.egsuv.chat.Rank;
+import kr.egsuv.chat.Prefix;
 import kr.egsuv.commands.Command;
 import net.md_5.bungee.api.ChatMessageType;
 import net.md_5.bungee.api.chat.TextComponent;
@@ -17,8 +17,8 @@ public class MegaphoneCommand implements Command {
     private final EGServerMain plugin = EGServerMain.getInstance();
 
     private static final int MAX_MESSAGE_LENGTH = 20;
-    private static final String USAGE_MESSAGE = Rank.SERVER + "사용법: /확성기 <메시지 [20글자 이내]> 또는 /확성기 <켜기|끄기>";
-    private static final String LENGTH_ERROR_MESSAGE = Rank.SERVER + "확성기는 20글자 이내로만 사용이 가능합니다.";
+    private static final String USAGE_MESSAGE = Prefix.SERVER + "사용법: /확성기 <메시지 [20글자 이내]> 또는 /확성기 <켜기|끄기>";
+    private static final String LENGTH_ERROR_MESSAGE = Prefix.SERVER + "확성기는 20글자 이내로만 사용이 가능합니다.";
     //    private static final String PERMISSION_ERROR_MESSAGE = Rank.SERVER + "확성기를 사용할 권한이 없습니다.";
 
     private static final long MESSAGE_DURATION = 200L; // 7초 (20 ticks = 1초)
@@ -40,19 +40,19 @@ public class MegaphoneCommand implements Command {
 
         if (args[0].equalsIgnoreCase("끄기")) {
             setMegaphoneEnabled(player, false);
-            player.sendMessage(Rank.SERVER + "확성기 메시지를 받지 않습니다.");
+            player.sendMessage(Prefix.SERVER + "확성기 메시지를 받지 않습니다.");
             return true;
         }
 
         if (args[0].equalsIgnoreCase("켜기")) {
             setMegaphoneEnabled(player, true);
-            player.sendMessage(Rank.SERVER + "확성기 메시지를 받습니다.");
+            player.sendMessage(Prefix.SERVER + "확성기 메시지를 받습니다.");
             return true;
         }
 
         if (isOnCooldown(player)) {
             long remainingTime = getRemainingCooldown(player);
-            player.sendMessage(Rank.SERVER + String.format("확성기를 다시 사용하려면 %d초 남았습니다.", remainingTime));
+            player.sendMessage(Prefix.SERVER + String.format("확성기를 다시 사용하려면 %d초 남았습니다.", remainingTime));
             return true;
         }
 

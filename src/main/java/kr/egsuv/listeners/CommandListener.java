@@ -1,6 +1,6 @@
 package kr.egsuv.listeners;
 
-import kr.egsuv.chat.Rank;
+import kr.egsuv.chat.Prefix;
 import kr.egsuv.commands.CommandManager;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -34,7 +34,7 @@ public class CommandListener implements Listener {
         if (commandManager.executeCommand(player, commandName, args)) {
             event.setCancelled(true);
         } else {
-            player.sendMessage(Rank.SERVER + "알 수 없는 명령어입니다.");
+            player.sendMessage(Prefix.SERVER + "알 수 없는 명령어입니다.");
             event.setCancelled(true);
         }
     }

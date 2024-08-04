@@ -23,3 +23,14 @@ commands:
   megaphone:
     description: Send a message to all players via action bar.
     usage: /megaphone <message>
+  firsthit:
+    description: 선빵 게임 명령어
+    usage: /<command> [join|quit|start|set]
+
+permissions:
+  egserver.admin:
+    description: 관리자 권한
+    default: op
+  minigame.admin:
+    description: 미니게임 관리자 권한
+    default: op

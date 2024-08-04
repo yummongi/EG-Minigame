@@ -1,7 +1,7 @@
 package kr.egsuv.listeners;
 
 import kr.egsuv.EGServerMain;
-import kr.egsuv.chat.Rank;
+import kr.egsuv.chat.Prefix;
 import kr.egsuv.commands.commandList.SpawnCommand;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
@@ -24,10 +24,8 @@ public class PlayerJoinListener implements Listener {
         event.setJoinMessage(null);
         // 플레이어가 완전히 접속된 후 명령어를 실행하도록 1틱 지연
         Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            boolean successInit = spawnCommand.initPlayer(player);
             boolean successTeleport = spawnCommand.teleportToSpawn(player);
-            plugin.setPlayerList(player, "로비");
-            if (!successInit || !successTeleport) {
+            if (!successTeleport) {
                 player.sendMessage("스폰 명령어를 실행할 수 없습니다. 관리자에게 문의하세요.");
             }
 
@@ -39,7 +37,7 @@ public class PlayerJoinListener implements Listener {
                 // 로비에 있는 사람만 환영 메시지 전송
                 for (Player onlinePlayer : Bukkit.getOnlinePlayers()) {
                     if (playerLocation.equals("로비")) {
-                        onlinePlayer.sendMessage(Rank.SERVER + player.getName() + "§f님이 로비에 입장하셨습니다.");
+                        onlinePlayer.sendMessage(Prefix.SERVER + player.getName() + "§f님이 로비에 입장하셨습니다.");
                     }
                 }
             }
