@@ -1,6 +1,7 @@
 package kr.egsuv.config;
 
 import kr.egsuv.EGServerMain;
+import kr.egsuv.minigames.TeamType;
 import org.bukkit.Location;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -19,6 +20,8 @@ public class MinigameConfig {
 
     private static final String BLUE_LOCATIONS = "blue-locations";
     private static final String RED_LOCATIONS = "red-locations";
+    private static final String TEAM_LOCATIONS = "team-locations";
+    private static final String TEAM_SPAWN_LOCATIONS = "team-spawn-locations";
     private static final String SOLO_LOCATIONS = "solo-locations";
     private static final String LOBBY_LOCATION = "lobby-location";
     private static final String GAME_LOBBY_LOCATION = "game-lobby-location";
@@ -28,6 +31,8 @@ public class MinigameConfig {
         this.minigameName = minigameName;
         loadConfig();
     }
+
+
 
     private void loadConfig() {
         if (configFile == null) {
@@ -50,6 +55,46 @@ public class MinigameConfig {
         } catch (IOException e) {
             plugin.getLogger().warning("미니게임 " + minigameName + "의 설정을 저장하는 데 실패했습니다.");
         }
+    }
+
+    public void addTeamSpawnLocation(String teamName, int teamNumber, Location location) {
+        String key = TEAM_SPAWN_LOCATIONS + "." + teamName + "." + teamNumber;
+        List<String> locStrings = config.getStringList(key);
+        locStrings.add(locationToString(location));
+        config.set(key, locStrings);
+        saveConfig();
+    }
+
+    public List<Location> getTeamSpawnLocations(String teamName, int teamNumber) {
+        String key = TEAM_SPAWN_LOCATIONS + "." + teamName + "." + teamNumber;
+        return getLocationsFromConfig(key);
+    }
+
+    public void setTeamLocation(String teamName, Location location) {
+        addLocationToConfig(TEAM_LOCATIONS + "." + teamName, location);
+    }
+
+    public List<Location> getTeamLocations(String teamName) {
+        return getLocationsFromConfig(TEAM_LOCATIONS + "." + teamName);
+    }
+
+    public void setTeamType(TeamType teamType) {
+        config.set("team-type", teamType.name());
+        saveConfig();
+    }
+
+    public TeamType getTeamType() {
+        String teamTypeName = config.getString("team-type", "SOLO");
+        return TeamType.valueOf(teamTypeName);
+    }
+
+    public void setNumberOfTeams(int numberOfTeams) {
+        config.set("number-of-teams", numberOfTeams);
+        saveConfig();
+    }
+
+    public int getNumberOfTeams() {
+        return config.getInt("number-of-teams", 1);
     }
 
     public void setLobbyLocation(Location location) {

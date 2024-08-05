@@ -16,7 +16,7 @@ public class PlayerDamageListener implements Listener {
             Player player = (Player) event.getEntity();
             String playerLocation = plugin.getPlayerListLocation(player);
             plugin.getLogger().info(player.getName() + "의 현재 위치: " + playerLocation);
-            if ("로비".equals(playerLocation)) {
+            if ("로비".equals(playerLocation) || "게임로비".equals(playerLocation)) {
                 event.setCancelled(true);
             }
         }

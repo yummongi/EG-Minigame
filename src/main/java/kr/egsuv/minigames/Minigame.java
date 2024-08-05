@@ -6,6 +6,10 @@ import kr.egsuv.config.MinigameConfig;
 import kr.egsuv.data.MinigameData;
 import kr.egsuv.data.PlayerData;
 import kr.egsuv.util.ItemUtils;
+import net.md_5.bungee.api.chat.BaseComponent;
+import net.md_5.bungee.api.chat.ComponentBuilder;
+import net.md_5.bungee.api.chat.HoverEvent;
+import net.md_5.bungee.api.chat.TextComponent;
 import org.bukkit.*;
 import org.bukkit.boss.BarColor;
 import org.bukkit.boss.BarStyle;
@@ -15,9 +19,14 @@ import org.bukkit.entity.Firework;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.FireworkMeta;
+import org.bukkit.inventory.meta.LeatherArmorMeta;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
+import org.bukkit.scoreboard.DisplaySlot;
+import org.bukkit.scoreboard.Objective;
+import org.bukkit.scoreboard.Scoreboard;
+import org.bukkit.scoreboard.Team;
 
 import java.util.*;
 
@@ -41,6 +50,10 @@ public abstract class Minigame {
     private int countdownTime = DEFAULT_COUNTDOWN_TIME;
     protected int gameTimeLimit;
 
+    // 탈주 관련
+    private Map<UUID, Long> disconnectTimes = new HashMap<>();
+    private static final long RECONNECT_WINDOW = 300000; // 5분
+
     protected boolean blockBreakAllowed = false;
     protected boolean blockPlaceAllowed = false;
     protected boolean itemDropAllowed = false;
@@ -54,8 +67,60 @@ public abstract class Minigame {
 
     // 팀 관리
     protected Map<Player, String> playerTeams = new HashMap<>();
+    protected TeamType teamType;
+    protected int numberOfTeams;
+    protected Map<String, List<Player>> teams;
 
-    public Minigame(EGServerMain plugin, String commandMainName, int MIN_PLAYER, int MAX_PLAYER, String displayGameName, boolean isTeamGame) {
+    //팀 채팅
+    private Map<Player, Boolean> teamChatEnabled = new HashMap<>();
+
+    // kda
+    private Map<Player, Integer> kills = new HashMap<>();
+    private Map<Player, Integer> deaths = new HashMap<>();
+    private Map<String, Integer> teamKills = new HashMap<>();
+    private Map<String, Integer> teamDeaths = new HashMap<>();
+
+    // 팀 색상 정의
+    protected static final Map<String, ChatColor> TEAM_COLORS = new HashMap<>() {{
+        put("red", ChatColor.RED);
+        put("blue", ChatColor.BLUE);
+        put("green", ChatColor.GREEN);
+        put("yellow", ChatColor.YELLOW);
+    }};
+
+    protected Scoreboard scoreboard;
+    protected Objective objective;
+    protected Map<String, Team> scoreboardTeams = new HashMap<>();
+
+    protected MinigameItems minigameItems;
+
+    // 개인전 생성자
+    public Minigame(EGServerMain plugin, String commandMainName, int MIN_PLAYER, int MAX_PLAYER, String displayGameName) {
+        this.plugin = plugin;
+        this.COMMAND_MAIN_NAME = commandMainName;
+        this.MIN_PLAYER = MIN_PLAYER;
+        this.MAX_PLAYER = MAX_PLAYER;
+        this.DISPLAY_GAME_NAME = displayGameName;
+        this.config = new MinigameConfig(plugin, commandMainName);
+        this.teamType = TeamType.SOLO; // teamType을 여기서 초기화합니다.
+        this.config.setTeamType(teamType);
+        this.config.setNumberOfTeams(numberOfTeams);
+        this.isTeamGame = false;
+        this.numberOfTeams = MAX_PLAYER;
+        this.teams = new HashMap<>();
+        for (int i = 1; i <= MAX_PLAYER; i++) {
+            teams.put("개인" + i, new ArrayList<>());
+        }
+
+        // 미니게임 관련 인스턴스 생성
+        this.minigameItems = new MinigameItems();
+
+        this.HELPER_ITEM = ItemUtils.createItem(Material.ENCHANTED_BOOK, 1, "§7[ §f게임 §a튜토리얼 §f읽기 §7]",
+                "§7§l| §f우클릭 시 게임 하는 방법을 알아볼 수 있습니다.");
+    }
+
+    // 팀 게임용 생성자
+    public Minigame(EGServerMain plugin, String commandMainName, int MIN_PLAYER, int MAX_PLAYER, String displayGameName, boolean isTeamGame, TeamType teamType, int numberOfTeams) {
         this.plugin = plugin;
         this.COMMAND_MAIN_NAME = commandMainName;
         this.MIN_PLAYER = MIN_PLAYER;
@@ -64,9 +129,147 @@ public abstract class Minigame {
         this.isTeamGame = isTeamGame;
         this.config = new MinigameConfig(plugin, commandMainName);
 
+        this.teamType = teamType; // teamType을 여기서 초기화합니다.
+        this.config.setTeamType(teamType);
+        this.config.setNumberOfTeams(numberOfTeams);
+
+        this.numberOfTeams = numberOfTeams;
+        this.teams = new HashMap<>();
+        for (int i = 1; i <= numberOfTeams; i++) {
+            teams.put("팀" + i, new ArrayList<>());
+        }
+
         this.HELPER_ITEM = ItemUtils.createItem(Material.ENCHANTED_BOOK, 1, "§7[ §f게임 §a튜토리얼 §f읽기 §7]",
                 "§7§l| §f우클릭 시 게임 하는 방법을 알아볼 수 있습니다.");
     }
+
+    // 팀 할당 및 스코어보드 설정을 위한 공통 메서드
+    protected void setupTeamsAndScoreboard() {
+        scoreboard = Bukkit.getScoreboardManager().getNewScoreboard();
+        objective = scoreboard.registerNewObjective("game", "dummy");
+        objective.setDisplayName(ChatColor.GOLD + getDisplayGameName());
+        objective.setDisplaySlot(DisplaySlot.SIDEBAR);
+
+        if (isTeamGame) {
+            for (String teamName : teams.keySet()) {
+                Team team = scoreboard.registerNewTeam(teamName);
+                ChatColor teamColor = TEAM_COLORS.getOrDefault(teamName, ChatColor.WHITE);
+                team.setColor(teamColor);
+                team.setPrefix(teamColor + "[" + teamName.toUpperCase() + "] ");
+                scoreboardTeams.put(teamName, team);
+
+                for (Player player : teams.get(teamName)) {
+                    team.addEntry(player.getName());
+                    player.setPlayerListName(teamColor + player.getName());
+                    player.setDisplayName(teamColor + player.getName() + ChatColor.RESET);
+                    giveColoredArmor(player, teamName);
+                }
+                objective.getScore(teamName.toUpperCase()).setScore(0);
+            }
+        } else {
+            for (Player player : players) {
+                objective.getScore(player.getName()).setScore(0);
+            }
+        }
+
+        for (Player player : players) {
+            player.setScoreboard(scoreboard);
+        }
+
+        initializeScores();
+    }
+
+    protected void initializeScores() {
+        for (Player player : players) {
+            scores.put(player, 0);
+        }
+    }
+
+    // 팀 채팅
+    public void toggleTeamChat(Player player) {
+        if (!isTeamGame || !players.contains(player)) {
+            player.sendMessage(Prefix.SERVER + "팀 채팅은 팀 게임 중에만 사용할 수 있습니다.");
+            return;
+        }
+
+        boolean current = teamChatEnabled.getOrDefault(player, false);
+        teamChatEnabled.put(player, !current);
+        player.sendMessage(Prefix.SERVER + "팀 채팅이 " + (!current ? "활성화" : "비활성화") + "되었습니다.");
+    }
+
+
+    public void broadcastToTeam(String message, String team) {
+        for (Player player : teams.get(team)) {
+            player.sendMessage(message);
+        }
+    }
+
+    public void handleChat(Player player, String message) {
+        if (!players.contains(player)) {
+            return; // 게임에 참여하지 않은 플레이어의 채팅은 무시
+        }
+
+        if (isTeamGame && teamChatEnabled.getOrDefault(player, false)) {
+            String team = getPlayerTeam(player);
+            broadcastToTeam(ChatColor.GREEN + "[팀] " + player.getName() + ": " + message, team);
+        } else {
+            broadcastToPlayers(ChatColor.WHITE + player.getName() + ": " + message);
+        }
+    }
+/*
+    protected void setupSoloScoreboard() {
+        scoreboard = Bukkit.getScoreboardManager().getNewScoreboard();
+        objective = scoreboard.registerNewObjective("game", "dummy");
+        objective.setDisplayName(ChatColor.GOLD + getDisplayGameName());
+        objective.setDisplaySlot(DisplaySlot.SIDEBAR);
+
+        for (Player player : players) {
+            objective.getScore(player.getName()).setScore(0);
+            player.setScoreboard(scoreboard);
+        }
+    }
+*/
+
+    // 색상이 있는 가죽 갑옷을 지급하는 메서드
+    protected void giveColoredArmor(Player player, String teamName) {
+        Color armorColor = getArmorColor(teamName);
+        player.getInventory().setHelmet(createColoredArmor(Material.LEATHER_HELMET, armorColor));
+        player.getInventory().setChestplate(createColoredArmor(Material.LEATHER_CHESTPLATE, armorColor));
+        player.getInventory().setLeggings(createColoredArmor(Material.LEATHER_LEGGINGS, armorColor));
+        player.getInventory().setBoots(createColoredArmor(Material.LEATHER_BOOTS, armorColor));
+    }
+
+    // 팀에 따른 갑옷 색상 반환
+    private Color getArmorColor(String teamName) {
+        switch (teamName.toLowerCase()) {
+            case "red": return Color.RED;
+            case "blue": return Color.BLUE;
+            case "green": return Color.GREEN;
+            case "yellow": return Color.YELLOW;
+            default: return Color.WHITE;
+        }
+    }
+
+    // 색상이 있는 가죽 갑옷 아이템 생성
+    private ItemStack createColoredArmor(Material material, Color color) {
+        ItemStack armor = new ItemStack(material);
+        LeatherArmorMeta meta = (LeatherArmorMeta) armor.getItemMeta();
+        meta.setColor(color);
+        armor.setItemMeta(meta);
+        return armor;
+    }
+
+    // 스코어 업데이트 메서드
+    protected void updateScore(String teamOrPlayerName, int score) {
+        if (isTeamGame) {
+            objective.getScore(teamOrPlayerName.toUpperCase()).setScore(score);
+        } else {
+            objective.getScore(teamOrPlayerName).setScore(score);
+        }
+    }
+
+
+
 
     // 게임 규칙 설정 메소드
     protected void setGameRules(boolean blockBreakAllowed, boolean blockPlaceAllowed, boolean itemDropAllowed, boolean itemPickupAllowed, boolean itemMoveAllowed) {
@@ -139,56 +342,89 @@ public abstract class Minigame {
     // 플레이어를 팀에 할당하는 메소드
     protected void assignPlayerToTeam(Player player, String team) {
         playerTeams.put(player, team);
+        ChatColor teamColor = TEAM_COLORS.getOrDefault(team, ChatColor.WHITE);
+        player.setPlayerListName(teamColor + player.getName());
+        player.setDisplayName(teamColor + player.getName() + ChatColor.RESET);
     }
 
     // 팀 게임 시작 시 플레이어들을 팀에 할당하는 메소드
     protected void assignTeams() {
-        if (!isTeamGame) {
-            return;
-        }
+        List<Player> shuffledPlayers = new ArrayList<>(players);
+        Collections.shuffle(shuffledPlayers);
 
-        List<Player> playerList = new ArrayList<>(players);
-        Collections.shuffle(playerList);
+        if (teamType == TeamType.SOLO) {
+            for (int i = 0; i < shuffledPlayers.size(); i++) {
+                Player player = shuffledPlayers.get(i);
+                String playerSlot = "개인" + (i + 1);
+                assignPlayerToTeam(player, playerSlot);
+            }
+        } else {
+            int playersPerTeam = teamType.getPlayersPerTeam();
+            int teamIndex = 1;
+            for (int i = 0; i < shuffledPlayers.size(); i++) {
+                Player player = shuffledPlayers.get(i);
+                String teamName = teamType.name().toLowerCase() + teamIndex;
+                assignPlayerToTeam(player, teamName);
 
-        for (int i = 0; i < playerList.size(); i++) {
-            Player player = playerList.get(i);
-            if (i % 2 == 0) {
-                assignPlayerToTeam(player, "red");
-            } else {
-                assignPlayerToTeam(player, "blue");
+                if ((i + 1) % playersPerTeam == 0) {
+                    teamIndex++;
+                }
             }
         }
     }
+
     // 게임 입장
     public void joinGame(Player player) {
+        if (state == MinigameState.DISABLED) {
+            player.sendMessage(Prefix.SERVER + DISPLAY_GAME_NAME + "§r 게임이 현재 §c점검중§f입니다.");
+        }
         if (state != MinigameState.WAITING && state != MinigameState.STARTING) {
-            player.sendMessage(Prefix.SERVER + DISPLAY_GAME_NAME + " 게임이 이미 진행 중입니다.");
+            player.sendMessage(Prefix.SERVER + DISPLAY_GAME_NAME + "§r 게임이 이미 진행 중입니다.");
             return;
         }
 
         if (players.contains(player)) {
-            player.sendMessage(Prefix.SERVER + "이미 게임에 참여 중입니다.");
+            player.sendMessage(Prefix.SERVER + "§r이미 게임에 참여 중입니다.");
+            return;
+        }
+
+        if (!plugin.getPlayerListLocation(player).equals("로비")) {
+            player.sendMessage(Prefix.SERVER + "이미 다른 게임에 참여 중입니다.");
             return;
         }
 
         if (current_player >= MAX_PLAYER) {
-            player.sendMessage(Prefix.SERVER + "현재 " + DISPLAY_GAME_NAME + " 게임이 꽉 찼습니다.");
+            player.sendMessage(Prefix.SERVER + "§r현재 " + DISPLAY_GAME_NAME + "§r 게임이 꽉 찼습니다.");
             player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1.0f, 1.0f);
             return;
         }
 
+        String teamToJoin = findTeamToJoin();
+        if (teamToJoin == null) {
+            player.sendMessage(Prefix.SERVER + "§r현재 참여 가능한 " + (isTeamGame ? "§r팀 자리" : "§r슬롯") + "가 없습니다. 잠시 후 다시 시도해주세요.");
+            return;
+        }
+
+        // 로비에서 게임로비로 위치 변경
+        setPlayerListLocation(player, "게임로비");
+
+        teams.get(teamToJoin).add(player);
         current_player++;
         players.add(player);
+        assignPlayerToTeam(player, teamToJoin);
         updateLobbyBossBar();
 
-        broadcastToPlayers(Prefix.SERVER + player.getName() + "님이 " + DISPLAY_GAME_NAME + " 게임에 입장하셨습니다. (" +
+        broadcastToPlayers(Prefix.SERVER + player.getName() + "님이 " + DISPLAY_GAME_NAME + " 게임의 " +
+                (isTeamGame ? teamToJoin + " 팀 자리" : (teamToJoin + " 번 슬롯")) + "에 입장하셨습니다. (" +
                 current_player + "/" + MIN_PLAYER + ")");
 
-        teleportToLobby(player);
+        teleportToGameLobby(player);
         preparePlayerForGame(player);
 
-        if (current_player >= MIN_PLAYER && state == MinigameState.WAITING) {
+        if (canStartGame() && state == MinigameState.WAITING) {
             startCountdown();
+        } else {
+            sendTeamBalanceInfo(player);
         }
     }
 
@@ -196,6 +432,12 @@ public abstract class Minigame {
         if (state == MinigameState.STARTING) {
             return;
         }
+
+        if (!canStartGame()) {
+            broadcastToPlayers(Prefix.SERVER + "§r게임을 시작하기 위한 조건이 충족되지 않았습니다.");
+            return;
+        }
+
         state = MinigameState.STARTING;
 
         if (countdownTask != null) {
@@ -207,24 +449,107 @@ public abstract class Minigame {
         countdownTask = new BukkitRunnable() {
             @Override
             public void run() {
+                if (!canStartGame()) {
+                    cancel();
+                    broadcastToPlayers(Prefix.SERVER + "§c플레이어 수 부족§r으로 §c카운트다운§r이 취소되었습니다.");
+                    state = MinigameState.WAITING;
+                    return;
+                }
+
                 if (countdownTime > 0) {
                     // broadcastToServer 조건
-                    if (countdownTime == countdownTime / 2 || countdownTime == 10 || countdownTime == 60) {
-                        broadcastToServer(Prefix.SERVER.toString() + countdownTime + "초 후 " + DISPLAY_GAME_NAME + " 게임이 시작됩니다.");
+                    if (countdownTime == DEFAULT_COUNTDOWN_TIME / 2 || countdownTime == 10 || countdownTime == 60) {
+                        broadcastToServer(Prefix.SERVER.toString() + countdownTime + "§r초 후 " + DISPLAY_GAME_NAME + "§r 게임이 시작됩니다.");
                     }
 
                     // broadcastToPlayers 조건
-                    if (countdownTime <= 9) {
-                        broadcastToPlayers(Prefix.SERVER.toString() + countdownTime + "초 후 " + DISPLAY_GAME_NAME + " 게임이 시작됩니다.");
+                    if (countdownTime <= 5) {
+                        broadcastToPlayers(Prefix.SERVER.toString() + countdownTime + "§r초 후 " + DISPLAY_GAME_NAME + "§r 게임이 시작됩니다.");
                     }
                     countdownTime--;
                 } else {
-                    this.cancel();
+                    cancel();
                     startGame();
                 }
             }
         }.runTaskTimer(plugin, 0L, 20L);
     }
+    protected String findTeamToJoin() {
+        if (teamType == TeamType.SOLO) {
+            for (Map.Entry<String, List<Player>> entry : teams.entrySet()) {
+                if (entry.getValue().isEmpty()) {
+                    return entry.getKey();
+                }
+            }
+        } else {
+            int minPlayers = Integer.MAX_VALUE;
+            String teamToJoin = null;
+            for (Map.Entry<String, List<Player>> entry : teams.entrySet()) {
+                if (entry.getValue().size() < teamType.getPlayersPerTeam() && entry.getValue().size() < minPlayers) {
+                    minPlayers = entry.getValue().size();
+                    teamToJoin = entry.getKey();
+                }
+            }
+            return teamToJoin;
+        }
+        return null; // 모든 팀이 꽉 찼거나 모든 개인 슬롯이 찼을 경우
+    }
+
+    private boolean canStartGame() {
+        if (current_player < MIN_PLAYER) {
+            return false;
+        }
+
+        if (teamType == TeamType.SOLO) {
+            return current_player >= MIN_PLAYER;
+        } else {
+            int fullTeams = 0;
+            int minPlayersPerTeam = teamType.getPlayersPerTeam();
+            for (List<Player> team : teams.values()) {
+                if (team.size() >= minPlayersPerTeam) {
+                    fullTeams++;
+                }
+            }
+            return fullTeams >= 2; // 최소 2개 팀이 조건을 만족해야 게임 시작 가능
+        }
+    }
+
+
+
+    private void sendTeamBalanceInfo(Player player) {
+        StringBuilder info = new StringBuilder("현재 게임 상황:\n");
+        if (isTeamGame) {
+            for (Map.Entry<String, List<Player>> entry : teams.entrySet()) {
+                info.append("§a§l").append(entry.getKey()).append("§r: §e").append(entry.getValue().size()).append("§r/§c").append(teamType.getPlayersPerTeam()).append(" §r명\n");
+            }
+            info.append("§c게임 시작§r을 위해 §a각 팀§r에 ").append(teamType.getPlayersPerTeam()).append("§r명의 §a플레이어§r가 필요합니다.");
+        } else {
+            info.append("§e현재 참가자 수: ").append(current_player).append("/").append(MAX_PLAYER).append("\n");
+            info.append("§r게임 시작을 위해 최소 ").append(MIN_PLAYER).append("§r명의 §a플레이어§r가 필요합니다.");
+        }
+
+        // 툴팁을 포함한 메시지 생성
+        TextComponent message = new TextComponent("§e현재 게임 상황 보기");
+        BaseComponent[] hoverText = new ComponentBuilder(info.toString()).create();
+        message.setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, hoverText));
+
+        player.spigot().sendMessage(message);
+    }
+/*    // 팀 밸런스 상황 정보
+    private void sendTeamBalanceInfo(Player player) {
+        StringBuilder info = new StringBuilder("현재 게임 상황:\n");
+        if (isTeamGame) {
+            for (Map.Entry<String, List<Player>> entry : teams.entrySet()) {
+                info.append("§a§l").append(entry.getKey()).append("§r: §e").append(entry.getValue().size()).append("§r/§c").append(teamType.getPlayersPerTeam()).append(" §r명\n");
+            }
+            info.append("§c게임 시작§r을 위해 §a각 팀§r에 ").append(teamType.getPlayersPerTeam()).append("§r명의 §a플레이어§r가 필요합니다.");
+        } else {
+            info.append("§e현재 참가자 수: ").append(current_player).append("/").append(MAX_PLAYER).append("\n");
+            info.append("§r게임 시작을 위해 최소 ").append(MIN_PLAYER).append("§r명의 §a플레이어§r가 필요합니다.");
+        }
+        broadcastToPlayers(info.toString());
+    }*/
+
 
     public void startGame() {
         state = MinigameState.IN_PROGRESS;
@@ -232,8 +557,13 @@ public abstract class Minigame {
             lobbyBossBar.removeAll();
             lobbyBossBar = null;
         }
+        resetKDStats();
+
         if (isTeamGame) {
             assignTeams();
+            setupTeamsAndScoreboard();
+        } else {
+            setupTeamsAndScoreboard(); // 개인전용 스코어보드 설정 메서드 (구현 필요)
         }
 
         for (Player player : players) {
@@ -248,13 +578,15 @@ public abstract class Minigame {
 
         }
 
-        broadcastTitle("§6" + DISPLAY_GAME_NAME, "§e게임 시작!", 10, 70, 20);
+        broadcastTitle("§6§l" + DISPLAY_GAME_NAME, "§e게임 시작!", 10, 70, 20);
         setupGameSpecificRules();
         onGameStart();
         startGameTimer();
+
     }
 
     public void endGame() {
+        onGameEnd();
         cancelCountdown();
         state = MinigameState.ENDING;
 
@@ -262,9 +594,11 @@ public abstract class Minigame {
         for (Player player : players) {
             player.setInvulnerable(true);
             player.sendMessage(Prefix.SERVER + " §c15초 §f후 게임이 종료됩니다.");
+            teamChatEnabled.remove(player);
         }
 
         showFinalRanking();
+        resetKDStats();
         recordGameResult();
 
         if (bossBar != null) {
@@ -289,33 +623,27 @@ public abstract class Minigame {
                 player.setInvulnerable(false);
             }
 
-            broadcastToServer(Prefix.SERVER + DISPLAY_GAME_NAME + " 게임이 종료되었습니다!");
+            broadcastToServer(Prefix.SERVER + DISPLAY_GAME_NAME + "§r 게임이 종료되었습니다!");
 
             resetGame();
         }, 300L); // 15초 (20틱 * 15 = 300틱)
     }
 
-    protected void onGameEnd() {
-        showFinalRanking();
-        for (Player player : getPlayers()) {
-            player.setScoreboard(Bukkit.getScoreboardManager().getNewScoreboard());
-        }
-        broadcastToServer(Prefix.SERVER.toString() + ChatColor.YELLOW + getDisplayGameName() + " 게임이 종료되었습니다!");
-    }
+
 
     // 강제 실행
     public void forceStart() {
         if (state == MinigameState.WAITING || state == MinigameState.STARTING) {
-            if (players.size() >= 2) {
+            if (canStartGame()) {
                 if (countdownTask != null) {
                     countdownTask.cancel();
                 }
                 startGame();
             } else {
-                broadcastToPlayers(Prefix.SERVER + "게임을 시작하기 위해서는 최소 2명의 플레이어가 필요합니다.");
+                broadcastToPlayers(Prefix.SERVER + "§c게임을 시작하기 위한 조건이 충족되지 않았습니다.");
             }
         } else {
-            broadcastToPlayers(Prefix.SERVER + "게임이 이미 진행 중입니다.");
+            broadcastToPlayers(Prefix.SERVER + "§c게임이 이미 진행 중입니다.");
         }
     }
 
@@ -326,7 +654,11 @@ public abstract class Minigame {
                 lobbyBossBar = Bukkit.createBossBar("대기 중: " + current_player + "/" + MIN_PLAYER, BarColor.BLUE, BarStyle.SOLID);
             }
             lobbyBossBar.setTitle("대기 중: " + current_player + "/" + MIN_PLAYER);
-            lobbyBossBar.setProgress((double) current_player / MIN_PLAYER);
+            double progress = (double) current_player / MIN_PLAYER;
+            if (progress > 1.0) {
+                progress = 1.0;
+            }
+            lobbyBossBar.setProgress(progress);
             if (current_player >= MIN_PLAYER) {
                 lobbyBossBar.setColor(BarColor.GREEN);
             } else {
@@ -346,7 +678,7 @@ public abstract class Minigame {
         List<Map.Entry<Player, Integer>> sortedScores = new ArrayList<>(scores.entrySet());
         sortedScores.sort(Map.Entry.comparingByValue(Comparator.reverseOrder()));
 
-        StringBuilder ranking = new StringBuilder("§6=== " + getDisplayGameName() + " 최종 랭킹 ===\n");
+        StringBuilder ranking = new StringBuilder("§6=== " + getDisplayGameName() + " 최종 랭킹 §6===\n");
         for (int i = 0; i < Math.min(10, sortedScores.size()); i++) {
             Map.Entry<Player, Integer> entry = sortedScores.get(i);
             ranking.append("§e").append(i + 1).append(". §f").append(entry.getKey().getName()).append(": §b").append(entry.getValue()).append("\n");
@@ -354,6 +686,22 @@ public abstract class Minigame {
 
         for (Player player : getPlayers()) {
             player.sendMessage(ranking.toString());
+        }
+
+        StringBuilder kdInfo = new StringBuilder("§6=== K/D 정보 ===\n");
+        if (isTeamGame) {
+            for (String team : teams.keySet()) {
+                double teamKD = getTeamKDRatio(team);
+                kdInfo.append("§e").append(team).append(": §b").append(String.format("%.2f", teamKD)).append("\n");
+            }
+        } else {
+            for (Player player : players) {
+                double playerKD = getKDRatio(player);
+                kdInfo.append("§e").append(player.getName()).append(": §b").append(String.format("%.2f", playerKD)).append("\n");
+            }
+        }
+        for (Player player : getPlayers()) {
+            player.sendMessage(kdInfo.toString());
         }
 
         if (!sortedScores.isEmpty()) {
@@ -402,6 +750,21 @@ public abstract class Minigame {
             plugin.teleportToSpawn(player);
             player.sendMessage(Prefix.SERVER + DISPLAY_GAME_NAME + " 게임에서 나가셨습니다.");
             player.setScoreboard(Bukkit.getScoreboardManager().getNewScoreboard());
+            kills.remove(player);
+            deaths.remove(player);
+
+            if (isTeamGame) {
+                String team = getPlayerTeam(player);
+                // 팀의 킬/데스 수 조정
+                teamKills.put(team, teamKills.getOrDefault(team, 0) - kills.getOrDefault(player, 0));
+                teamDeaths.put(team, teamDeaths.getOrDefault(team, 0) - deaths.getOrDefault(player, 0));
+            }
+
+            // 팀에서 플레이어 제거
+            String team = playerTeams.remove(player);
+            if (team != null) {
+                teams.get(team).remove(player);
+            }
 
             if (bossBar != null) {
                 bossBar.removePlayer(player); // BossBar에서 플레이어 제거
@@ -410,11 +773,88 @@ public abstract class Minigame {
             if (lobbyBossBar != null) {
                 lobbyBossBar.removePlayer(player);
             }
+
+            removePlayerFromScoreboard(player);
             checkGameState();
             updateLobbyBossBar();
+            teamChatEnabled.remove(player);
         }
     }
 
+    //게임 탈주 로직
+    public void handlePlayerDisconnect(Player player) {
+        disconnectTimes.put(player.getUniqueId(), System.currentTimeMillis());
+        teamChatEnabled.remove(player);
+        checkTeamBalance();
+    }
+
+    public void handlePlayerReconnect(Player player) {
+        Long disconnectTime = disconnectTimes.get(player.getUniqueId());
+        if (disconnectTime != null && System.currentTimeMillis() - disconnectTime < RECONNECT_WINDOW) {
+            rejoinPlayer(player);
+        } else {
+            player.sendMessage(Prefix.SERVER + "재접속 시간이 초과되어 게임에 다시 참여할 수 없습니다.");
+            teamChatEnabled.remove(player);
+        }
+        disconnectTimes.remove(player.getUniqueId());
+    }
+
+    private void rejoinPlayer(Player player) {
+        // 플레이어를 게임에 다시 참여시키는 로직
+        players.add(player);
+        String team = playerTeams.get(player.getUniqueId());
+        if (team != null) {
+            teams.get(team).add(player);
+        }
+        player.teleport(getRandomSpawnLocation(player));
+        giveGameItems(player);
+        player.sendMessage(Prefix.SERVER + "게임에 다시 참여하셨습니다.");
+    }
+
+    protected void checkTeamBalance() {
+        if (isTeamGame && state == MinigameState.IN_PROGRESS) {
+            Map<String, Integer> teamCounts = new HashMap<>();
+            for (Map.Entry<String, List<Player>> entry : teams.entrySet()) {
+                teamCounts.put(entry.getKey(), entry.getValue().size());
+            }
+
+            if (teamCounts.containsValue(0)) {
+                // 한 팀의 모든 플레이어가 나갔을 경우
+                broadcastToPlayers(Prefix.SERVER + "팀 밸런스가 무너져 게임을 종료합니다.");
+                endGame();
+            } else if (Collections.min(teamCounts.values()) < MIN_PLAYER / teams.size() / 2) {
+                // 한 팀의 플레이어 수가 최소 인원의 절반 이하로 떨어졌을 경우
+                balanceTeams();
+            }
+        }
+    }
+
+    private void balanceTeams() {
+        List<Player> allPlayers = new ArrayList<>(players);
+        Collections.shuffle(allPlayers);
+        Map<String, List<Player>> newTeams = new HashMap<>();
+        for (String teamName : teams.keySet()) {
+            newTeams.put(teamName, new ArrayList<>());
+        }
+
+        int playersPerTeam = allPlayers.size() / teams.size();
+        int currentTeamIndex = 0;
+        for (Player player : allPlayers) {
+            String teamName = (String) teams.keySet().toArray()[currentTeamIndex];
+            newTeams.get(teamName).add(player);
+            if (newTeams.get(teamName).size() >= playersPerTeam) {
+                currentTeamIndex = (currentTeamIndex + 1) % teams.size();
+            }
+        }
+
+        teams = newTeams;
+        for (Map.Entry<String, List<Player>> entry : teams.entrySet()) {
+            for (Player player : entry.getValue()) {
+                assignPlayerToTeam(player, entry.getKey());
+            }
+        }
+        broadcastToPlayers(Prefix.SERVER + "팀 밸런스를 위해 팀이 재조정되었습니다.");
+    }
 
     protected void startGameTimer() {
         bossBar = Bukkit.createBossBar("남은 시간: " + gameTimeLimit + "초", BarColor.BLUE, BarStyle.SOLID);
@@ -430,7 +870,7 @@ public abstract class Minigame {
                 if (timeLeft <= 0 || state != MinigameState.IN_PROGRESS) {
                     if (bossBar != null) {
                         bossBar.removeAll();
-                        bossBar = null; // BossBar 제거 후 null로 설정
+                        bossBar = null;
                     }
                     this.cancel();
                     if (state == MinigameState.IN_PROGRESS) {
@@ -456,16 +896,15 @@ public abstract class Minigame {
             player.teleport(deathLocation);
             player.sendTitle("§c사망", "§e3초 후 리스폰됩니다", 10, 40, 10);
 
-            // 5초 후 리스폰 처리
+            // 3초 후 리스폰 처리
             Bukkit.getScheduler().runTaskLater(plugin, () -> {
                 player.setGameMode(GameMode.SURVIVAL);
                 player.teleport(getRandomSpawnLocation(player));
                 giveGameItems(player);
                 player.setHealth(player.getMaxHealth());
-            }, 60L); // 5초
+            }, 60L); // 3초
         }, 1L); // 다음 틱에 실행
     }
-
     // 유틸리티 메서드
     protected void broadcastToPlayers(String message) {
         for (Player player : players) {
@@ -484,33 +923,23 @@ public abstract class Minigame {
     }
 
     protected Location getRandomSpawnLocation(Player player) {
-        if (isTeamGame) {
-            // 팀 게임일 경우
-            String team = getPlayerTeam(player); // 플레이어의 팀을 가져오는 메서드 (구현 필요)
-            List<Location> teamLocations;
-            if ("red".equals(team)) {
-                teamLocations = config.getRedTeamLocations();
-            } else {
-                teamLocations = config.getBlueTeamLocations();
-            }
-
-            if (teamLocations.isEmpty()) {
-                player.sendMessage(Prefix.SERVER + "§c팀 스폰 위치가 설정되어 있지 않습니다. 관리자에게 문의하세요.");
-                return config.getGameLobbyLocation();
-            }
-            return teamLocations.get(new Random().nextInt(teamLocations.size()));
+        List<Location> spawnLocations;
+        if (teamType == TeamType.SOLO) {
+            spawnLocations = config.getSoloLocations();
         } else {
-            // 개인전일 경우
-            List<Location> locations = config.getSoloLocations();
-            if (locations.isEmpty()) {
-                player.sendMessage(Prefix.SERVER + "§c스폰 위치가 설정되어 있지 않습니다. 관리자에게 문의하세요.");
-                return config.getGameLobbyLocation();
-            }
-            return locations.get(new Random().nextInt(locations.size()));
+            String team = getPlayerTeam(player);
+            int teamNumber = Integer.parseInt(team.replaceAll("\\D+", ""));
+            spawnLocations = config.getTeamSpawnLocations(teamType.name().toLowerCase(), teamNumber);
         }
+
+        if (spawnLocations == null || spawnLocations.isEmpty()) {
+            player.sendMessage(Prefix.SERVER + "§c스폰 위치가 설정되어 있지 않습니다. 관리자에게 문의하세요.");
+            return config.getGameLobbyLocation();
+        }
+        return spawnLocations.get(new Random().nextInt(spawnLocations.size()));
     }
 
-    private void teleportToLobby(Player player) {
+    private void teleportToGameLobby(Player player) {
         Location lobbyLocation = config.getGameLobbyLocation();
         if (lobbyLocation != null) {
             plugin.safelyTeleportPlayer(player, lobbyLocation);
@@ -542,8 +971,26 @@ public abstract class Minigame {
         players.clear();
         scores.clear();
         playerTeams.clear();
+        teams.clear();
+        teamChatEnabled.clear();
+        resetKDStats();
+
+        if (!isTeamGame) {
+            for (int i = 1; i <= MAX_PLAYER; i++) {
+                teams.put("개인" + i, new ArrayList<>());
+                teamType = TeamType.SOLO;
+            }
+        } else {
+            for (int i = 1; i <= numberOfTeams; i++) {
+                teams.put("팀" + i, new ArrayList<>()); // 팀 초기화
+            }
+        }
+
+
+        scoreboardTeams.clear();
         current_player = 0;
         state = MinigameState.WAITING;
+        countdownTime = DEFAULT_COUNTDOWN_TIME; // 카운트다운 시간 초기화
 
     }
 
@@ -563,6 +1010,7 @@ public abstract class Minigame {
 
     public void handlePlayerQuit(Player player) {
         gameQuitPlayer(player);
+        handlePlayerDisconnect(player);
         broadcastToPlayers(Prefix.SERVER + player.getName() + "님이 게임에서 퇴장하셨습니다.");
         removePlayerFromScoreboard(player);
     }
@@ -578,16 +1026,83 @@ public abstract class Minigame {
         }
     }
 
-    public abstract void showRules(Player player);
+    // kda
 
-    // 추상 메서드
-    protected abstract void onGameStart();
+    public void addKill(Player player) {
+        kills.put(player, kills.getOrDefault(player, 0) + 1);
+        if (isTeamGame) {
+            String team = getPlayerTeam(player);
+            teamKills.put(team, teamKills.getOrDefault(team, 0) + 1);
+        }
+        updateScoreboard();
+    }
 
-    protected abstract void setupScoreboard();
+    public void addDeath(Player player) {
+        deaths.put(player, deaths.getOrDefault(player, 0) + 1);
+        if (isTeamGame) {
+            String team = getPlayerTeam(player);
+            teamDeaths.put(team, teamDeaths.getOrDefault(team, 0) + 1);
+        }
+        updateScoreboard();
+    }
+
+    public double getKDRatio(Player player) {
+        int playerKills = kills.getOrDefault(player, 0);
+        int playerDeaths = deaths.getOrDefault(player, 1); // 0으로 나누는 것을 방지
+        return (double) playerKills / playerDeaths;
+    }
+
+    public double getTeamKDRatio(String team) {
+        int teamKillCount = teamKills.getOrDefault(team, 0);
+        int teamDeathCount = teamDeaths.getOrDefault(team, 1); // 0으로 나누는 것을 방지
+        return (double) teamKillCount / teamDeathCount;
+    }
+
+    public void showKDRatio(Player player) {
+        double kdRatio = getKDRatio(player);
+        player.sendMessage(Prefix.SERVER + "당신의 K/D 비율: " + String.format("%.2f", kdRatio));
+        if (isTeamGame) {
+            String team = getPlayerTeam(player);
+            double teamKDRatio = getTeamKDRatio(team);
+            player.sendMessage(Prefix.SERVER + "팀의 K/D 비율: " + String.format("%.2f", teamKDRatio));
+        }
+    }
+
+    private void resetKDStats() {
+        kills.clear();
+        deaths.clear();
+        teamKills.clear();
+        teamDeaths.clear();
+    }
+    // 아이템 지급
     protected abstract void giveGameItems(Player player);
+    // 기본 아이템 지급 (모든 게임에 공통적으로 필요한 아이템이 있다면)
+
+    protected void giveDefaultItems(Player player) {
+        player.getInventory().clear();
+        player.getInventory().setItem(8, HELPER_ITEM);
+        if (isTeamGame) {
+            String team = getPlayerTeam(player);
+            giveColoredArmor(player, team);
+        }
+    }
+
+    // 상태 변경
+    public void setState(MinigameState state) {
+        this.state = state;
+    }
+
+
+    public abstract void showRules(Player player);
+    // 추상 메서드
+
+    protected abstract void onGameStart();
+    protected abstract void onGameEnd();
+
     protected abstract void setupGameSpecificRules();
     protected abstract void removePlayerFromScoreboard(Player player);
 
+    protected abstract void updateScoreboard();
     // Getter 메서드
     public MinigameConfig getConfig() { return config; }
     public int getMIN_PLAYER() { return MIN_PLAYER; }
@@ -599,6 +1114,9 @@ public abstract class Minigame {
     public BossBar getBossBar() { return bossBar; }
     public BossBar getLobbyBossBar() { return lobbyBossBar; }
     public int getGameTimeLimit() { return gameTimeLimit; }
+    // Getter for disconnectTimes
+    public Map<UUID, Long> getDisconnectTimes() { return disconnectTimes; }
+
 
     public boolean isBlockBreakAllowed() { return blockBreakAllowed; }
     public boolean isBlockPlaceAllowed() { return blockPlaceAllowed; }

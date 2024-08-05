@@ -3,31 +3,15 @@ package kr.egsuv.ranking;
 import kr.egsuv.EGServerMain;
 import kr.egsuv.data.MinigameData;
 import kr.egsuv.data.PlayerData;
+import kr.egsuv.minigames.Minigame;
+import kr.egsuv.minigames.TeamType;
 
 import java.util.*;
-/*
-1. 팀전 점수 시스템:
-   - 기본 점수: (승률 * 1000 - 패배율 * 500) * 참여도 * 최근 활동 보너스
-   - 패배 페널티: 패배 횟수에 따라 지수적으로 증가하는 페널티 (PENALTY_FACTOR^패배횟수 * 1000)
-   - 참여도 계수: 로그 스케일로 변경하여 초반에 빠르게 증가하고 나중에는 천천히 증가
-   - 최근 활동 보너스: 15일 이내 게임 참여 시 최대 2배 보너스 (더 짧은 기간으로 조정)
 
-2. 개인전 점수 시스템:
-   - 기본 점수: 각 등수별 점수 합계 (1등: 500점, 2등: 405점, ..., 10등: 5점)
-   - 평균 등수 보너스: (10 - 평균 등수)^2 * 10
-   - 패배 페널티: (평균 순위 / 10)^2 * 1000 (평균 순위가 낮을수록 높은 페널티)
-   - 참여도 계수: 로그 스케일로 변경
-   - 최근 활동 보너스: 15일 이내 게임 참여 시 최대 2배 보너스
-
-3. 공통 사항:
-   - 최대 100게임까지만 고려하여 장기간 플레이어와 신규 플레이어 간의 격차를 줄임
-   - 점수가 음수가 되지 않도록 보장
-
- */
 public class RankingManager {
     private final EGServerMain plugin = EGServerMain.getInstance();
-    private static final double PENALTY_FACTOR = 0.7; // 패배 시 점수 감소 계수
-    private static final int MAX_GAMES_CONSIDERED = 30; // 최대 고려 게임 수
+    private static final double PENALTY_FACTOR = 0.9; // 패배 시 점수 감소 계수 (약간 완화)
+    private static final int MAX_GAMES_CONSIDERED = 50; // 최대 고려 게임 수 (약간 증가)
     private static final int RECENT_ACTIVITY_DAYS = 15; // 최근 활동으로 간주할 일 수
     private static final double MAX_RECENT_ACTIVITY_BONUS = 1.5; // 최근 활동 최대 보너스
 
@@ -36,10 +20,10 @@ public class RankingManager {
 
         for (UUID uuid : plugin.getDataManager().getAllPlayerUUIDs()) {
             PlayerData playerData = plugin.getDataManager().getPlayerData(uuid);
-            boolean isTeamGame = plugin.getMinigameByName(gameName).isTeamGame();
-            MinigameData gameData = playerData.getMinigameData(gameName, isTeamGame);
+            Minigame minigame = plugin.getMinigameByName(gameName);
+            MinigameData gameData = playerData.getMinigameData(gameName, minigame.getConfig().getTeamType() != TeamType.SOLO);
 
-            double score = calculateScore(gameData);
+            double score = calculateScore(gameData, minigame.getConfig().getTeamType());
             playerScores.put(playerData.getPlayerName(), score);
         }
 
@@ -49,12 +33,34 @@ public class RankingManager {
         return sortedPlayers.subList(0, Math.min(limit, sortedPlayers.size()));
     }
 
-    private double calculateScore(MinigameData gameData) {
-        if (gameData.isTeamGame()) {
-            return calculateTeamScore(gameData);
+    private double calculateScore(MinigameData gameData, TeamType teamType) {
+        if (teamType == TeamType.SOLO) {
+            return calculateSoloScore(gameData);
         } else {
-            return calculateIndividualScore(gameData);
+            return calculateTeamScore(gameData);
         }
+    }
+
+    private double calculateSoloScore(MinigameData gameData) {
+        int totalGames = Math.min(gameData.getTotalGames(), MAX_GAMES_CONSIDERED);
+        if (totalGames == 0) return 0;
+
+        double baseScore = 0;
+        for (int rank = 1; rank <= 10; rank++) {
+            int count = gameData.getRankCount(rank);
+            baseScore += count * getPointsForRank(rank);
+        }
+
+        double averageRank = calculateAverageRank(gameData);
+        double rankBonus = Math.pow(10 - averageRank, 2) * 5;
+        double participationFactor = Math.log10(totalGames + 1) / Math.log10(MAX_GAMES_CONSIDERED + 1);
+        double recentActivityBonus = calculateRecentActivityBonus(gameData.getLastPlayTime());
+
+        // 패배 페널티 추가 (평균 순위가 낮을수록 높은 페널티)
+        double penaltyScore = Math.pow(averageRank / 10, 2) * 500;
+
+        double finalScore = ((baseScore / totalGames) + rankBonus) * participationFactor * recentActivityBonus - penaltyScore;
+        return Math.max(0, finalScore);
     }
 
     private double calculateTeamScore(MinigameData gameData) {
@@ -66,29 +72,28 @@ public class RankingManager {
         double participationFactor = Math.log10(totalGames + 1) / Math.log10(MAX_GAMES_CONSIDERED + 1);
         double recentActivityBonus = calculateRecentActivityBonus(gameData.getLastPlayTime());
 
-        double baseScore = (winRate * 1000 - lossRate * 500) * participationFactor * recentActivityBonus;
-        double penaltyScore = Math.pow(PENALTY_FACTOR, gameData.getLosses()) * 1000;
+        double baseScore = (winRate * 1000 - lossRate * 300) * participationFactor * recentActivityBonus;
+
+        // 패배 페널티 조정
+        double penaltyScore = (1 - Math.pow(PENALTY_FACTOR, gameData.getLosses())) * 500;
 
         return Math.max(0, baseScore - penaltyScore);
     }
 
-    private double calculateIndividualScore(MinigameData gameData) {
-        int totalGames = Math.min(gameData.getTotalGames(), MAX_GAMES_CONSIDERED);
-        if (totalGames == 0) return 0;
-
-        double score = 0;
-        for (int i = 1; i <= 10; i++) {
-            score += gameData.getRankCount(i) * Math.pow(11 - i, 2) * 5;
+    private int getPointsForRank(int rank) {
+        switch (rank) {
+            case 1: return 500;
+            case 2: return 400;
+            case 3: return 300;
+            case 4: return 250;
+            case 5: return 200;
+            case 6: return 150;
+            case 7: return 100;
+            case 8: return 75;
+            case 9: return 50;
+            case 10: return 25;
+            default: return 0;
         }
-
-        double averageRank = calculateAverageRank(gameData);
-        double participationFactor = Math.log10(totalGames + 1) / Math.log10(MAX_GAMES_CONSIDERED + 1);
-        double recentActivityBonus = calculateRecentActivityBonus(gameData.getLastPlayTime());
-
-        double baseScore = (score / totalGames + Math.pow(10 - averageRank, 2) * 10) * participationFactor * recentActivityBonus;
-        double penaltyScore = Math.pow(averageRank / 10, 2) * 1000; // 평균 순위가 낮을수록 높은 페널티
-
-        return Math.max(0, baseScore - penaltyScore);
     }
 
     private double calculateAverageRank(MinigameData gameData) {

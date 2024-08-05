@@ -9,6 +9,7 @@ import kr.egsuv.listeners.*;
 import kr.egsuv.commands.CommandManager;
 import kr.egsuv.minigames.Minigame;
 import kr.egsuv.minigames.MinigameGui;
+import kr.egsuv.minigames.TeamType;
 import kr.egsuv.minigames.games.FirstHitGame;
 import kr.egsuv.minigames.games.TeamDeathmatchGame;
 import kr.egsuv.ranking.RankingManager;
@@ -61,11 +62,13 @@ public final class EGServerMain extends JavaPlugin implements Listener {
         dataManager = new DataManager();
 
         // 미니게임 추가
-        firstHitGame = new FirstHitGame(this, "firsthit", 2, 8, "§7[ §a선빵 게임 §7]", false);
+        firstHitGame = new FirstHitGame(this, "fth", 2, 8,
+                "§a선빵 게임§r");
         minigameList.add(firstHitGame);
 
         // TeamDeathmatchGame 추가
-        teamDeathmatchGame = new TeamDeathmatchGame(this, "teamdeathmatch", 2, 16, "§7[ §c팀 데스매치 §7]");
+        teamDeathmatchGame = new TeamDeathmatchGame(this, "tdm", 4, 12,
+                "§c팀 데스매치§r", true, TeamType.DUO, 2);
         minigameList.add(teamDeathmatchGame);
 
         //리스너 등록
@@ -113,7 +116,6 @@ public final class EGServerMain extends JavaPlugin implements Listener {
         commandManager.registerCommand(spawnCommand, "스폰", "spawn");
         commandManager.registerCommand(new TimeCommand(), "time", "시간");
         commandManager.registerCommand(new MegaphoneCommand(), "확성기", "메아리", "megaphone");
-        commandManager.registerCommand(new FirstHitCommand(firstHitGame), "firsthit");
         commandManager.registerCommand(new MinigameCommand(), "minigame", "game");
 
         // TabCompleter 등록
@@ -134,7 +136,7 @@ public final class EGServerMain extends JavaPlugin implements Listener {
                 // 리스너 추가
                 new ChatListener(),
                 new CommandListener(commandManager),
-                new PlayerJoinListener(new SpawnCommand(miniGamesGui)),
+                new PlayerJoinListener(new SpawnCommand(miniGamesGui), minigameList),
                 new PlayerQuitListener(minigameList),
                 new PlayerDamageListener(),
                 new NoDropOrMoveListener(),

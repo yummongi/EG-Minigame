@@ -3,19 +3,24 @@ package kr.egsuv.listeners;
 import kr.egsuv.EGServerMain;
 import kr.egsuv.chat.Prefix;
 import kr.egsuv.commands.commandList.SpawnCommand;
+import kr.egsuv.minigames.Minigame;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
 
+import java.util.List;
+
 public class PlayerJoinListener implements Listener {
 
     private final EGServerMain plugin = EGServerMain.getInstance();
     private final SpawnCommand spawnCommand;
+    private final List<Minigame> minigames;
 
-    public PlayerJoinListener(SpawnCommand spawnCommand) {
+    public PlayerJoinListener(SpawnCommand spawnCommand, List<Minigame> minigames) {
         this.spawnCommand = spawnCommand;
+        this.minigames = minigames;
     }
 
     @EventHandler
@@ -30,6 +35,14 @@ public class PlayerJoinListener implements Listener {
             }
 
             String playerLocation = plugin.getPlayerListLocation(player);
+
+            // 탈주 재입장
+            for (Minigame minigame : minigames) {
+                if (minigame.getDisconnectTimes().containsKey(player.getUniqueId())) {
+                    minigame.handlePlayerReconnect(player);
+                    break;
+                }
+            }
 
             if (playerLocation != null && playerLocation.equals("로비")) {
                 player.sendTitle("§6§lENDLESS", "§e§lMINIGAME", 10, 70, 20);

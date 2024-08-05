@@ -4,6 +4,7 @@ import kr.egsuv.EGServerMain;
 import kr.egsuv.chat.Prefix;
 import kr.egsuv.minigames.Minigame;
 import kr.egsuv.minigames.MinigameState;
+import kr.egsuv.minigames.TeamType;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Location;
@@ -30,11 +31,17 @@ public class TeamDeathmatchGame extends Minigame implements Listener {
     private Team blueTeam;
     private Map<Player, Team> playerTeams = new HashMap<>();
 
-    public TeamDeathmatchGame(EGServerMain plugin, String commandMainName, int MIN_PLAYER, int MAX_PLAYER, String displayGameName) {
-        super(plugin, commandMainName, MIN_PLAYER, MAX_PLAYER, displayGameName, true);
+    /*
+    (TeamType.DUO, 3): 2명씩 3팀, 총 6명
+    (TeamType.TRIPLE, 2): 3명씩 2팀, 총 6명
+    (TeamType.SOLO, 10): 1명씩 10팀, 총 10명
+     */
+
+    public TeamDeathmatchGame(EGServerMain plugin, String commandMainName, int MIN_PLAYER, int MAX_PLAYER, String displayGameName, boolean isTeamGame, TeamType teamType, int numberOfTeams) {
+        super(plugin, commandMainName, MIN_PLAYER, MAX_PLAYER, displayGameName, isTeamGame, teamType, numberOfTeams);
         plugin.getServer().getPluginManager().registerEvents(this, plugin);
         setGameRules(false, false, false, true, false);
-        setGameTimeLimit(600); // 10분 시간 제한
+        setGameTimeLimit(300); // 5분 시간 제한
     }
 
     @Override
@@ -44,8 +51,7 @@ public class TeamDeathmatchGame extends Minigame implements Listener {
 
     @Override
     protected void onGameStart() {
-        setupScoreboard();
-        assignTeams();
+        super.setupTeamsAndScoreboard();
         for (Player player : getPlayers()) {
             giveGameItems(player);
             teleportToTeamSpawn(player);
@@ -53,23 +59,8 @@ public class TeamDeathmatchGame extends Minigame implements Listener {
     }
 
     @Override
-    protected void setupScoreboard() {
-        scoreboard = Bukkit.getScoreboardManager().getNewScoreboard();
-        objective = scoreboard.registerNewObjective("teamdeathmatch", "dummy");
-        objective.setDisplayName(ChatColor.GOLD + "팀 데스매치");
-        objective.setDisplaySlot(DisplaySlot.SIDEBAR);
-
-        redTeam = scoreboard.registerNewTeam("Red");
-        blueTeam = scoreboard.registerNewTeam("Blue");
-        redTeam.setColor(ChatColor.RED);
-        blueTeam.setColor(ChatColor.BLUE);
-
-        objective.getScore("Red Team").setScore(0);
-        objective.getScore("Blue Team").setScore(0);
-
-        for (Player player : getPlayers()) {
-            player.setScoreboard(scoreboard);
-        }
+    protected void onGameEnd() {
+        // 추가로 게임 끝날 때 구현해야할 것이 있다면 로직 작성
     }
 
     private void teleportToTeamSpawn(Player player) {
@@ -103,20 +94,11 @@ public class TeamDeathmatchGame extends Minigame implements Listener {
 
     @Override
     protected void giveGameItems(Player player) {
-        player.getInventory().clear();
+        String teamName = getPlayerTeam(player);
+        giveColoredArmor(player, teamName); // 색상 갑옷 지급
         player.getInventory().addItem(new ItemStack(Material.IRON_SWORD));
         player.getInventory().addItem(new ItemStack(Material.BOW));
         player.getInventory().addItem(new ItemStack(Material.ARROW, 64));
-
-        ItemStack helmet = new ItemStack(Material.LEATHER_HELMET);
-        ItemStack chestplate = new ItemStack(Material.LEATHER_CHESTPLATE);
-        ItemStack leggings = new ItemStack(Material.LEATHER_LEGGINGS);
-        ItemStack boots = new ItemStack(Material.LEATHER_BOOTS);
-
-        player.getInventory().setHelmet(helmet);
-        player.getInventory().setChestplate(chestplate);
-        player.getInventory().setLeggings(leggings);
-        player.getInventory().setBoots(boots);
     }
 
     @Override
@@ -135,9 +117,14 @@ public class TeamDeathmatchGame extends Minigame implements Listener {
         }
     }
 
-    private void updateScoreboard() {
-        objective.getScore("Red Team").setScore(redTeam.getEntries().size());
-        objective.getScore("Blue Team").setScore(blueTeam.getEntries().size());
+    @Override
+    protected void updateScoreboard() {
+        for (String teamName : teams.keySet()) {
+            int teamScore = teams.get(teamName).stream()
+                    .mapToInt(player -> scores.getOrDefault(player, 0))
+                    .sum();
+            updateScore(teamName, teamScore);
+        }
     }
 
     @EventHandler
@@ -151,10 +138,10 @@ public class TeamDeathmatchGame extends Minigame implements Listener {
         event.setKeepInventory(true);
         event.getDrops().clear();
 
-        if (killer != null && getPlayers().contains(killer) && playerTeams.get(killer) != playerTeams.get(victim)) {
-            Team killerTeam = playerTeams.get(killer);
-            int newScore = objective.getScore(killerTeam.getName()).getScore() + 1;
-            objective.getScore(killerTeam.getName()).setScore(newScore);
+        if (killer != null && getPlayers().contains(killer) && !getPlayerTeam(killer).equals(getPlayerTeam(victim))) {
+            String killerTeam = getPlayerTeam(killer);
+            int newScore = objective.getScore(killerTeam.toUpperCase()).getScore() + 1;
+            updateScore(killerTeam, newScore);
 
             broadcastToPlayers(ChatColor.YELLOW + killer.getName() + ChatColor.WHITE + "님이 " +
                     ChatColor.YELLOW + victim.getName() + ChatColor.WHITE + "님을 처치했습니다!");
@@ -166,6 +153,7 @@ public class TeamDeathmatchGame extends Minigame implements Listener {
         }
 
         handlePlayerDeath(victim);
+        updateScoreboard();
     }
 
     @EventHandler

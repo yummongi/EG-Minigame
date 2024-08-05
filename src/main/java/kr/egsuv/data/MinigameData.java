@@ -10,6 +10,7 @@ public class MinigameData {
     private Map<Integer, Integer> rankCounts; // 순위별 횟수 (개인전용)
     private int totalGames;
     private long lastPlayTime;
+    private Map<String, Integer> teamStats; // 팀별 승리 횟수 등
 
     public MinigameData(boolean isTeamGame) {
         this.isTeamGame = isTeamGame;
@@ -21,6 +22,7 @@ public class MinigameData {
         }
         this.totalGames = 0;
         this.lastPlayTime = System.currentTimeMillis();
+        this.teamStats = new HashMap<>();
     }
 
     public void addWin() {
@@ -33,6 +35,14 @@ public class MinigameData {
         if (isTeamGame) {
             losses++;
         }
+    }
+
+    public void addTeamWin(String teamName) {
+        teamStats.put(teamName, teamStats.getOrDefault(teamName, 0) + 1);
+    }
+
+    public int getTeamWins(String teamName) {
+        return teamStats.getOrDefault(teamName, 0);
     }
 
     public void addRank(int rank) {
