@@ -3,6 +3,7 @@ package kr.egsuv.minigames.games;
 import kr.egsuv.EGServerMain;
 import kr.egsuv.chat.Prefix;
 import kr.egsuv.minigames.Minigame;
+import kr.egsuv.minigames.MinigameItems;
 import kr.egsuv.minigames.MinigameState;
 import kr.egsuv.minigames.TeamType;
 import kr.egsuv.util.ItemUtils;
@@ -36,8 +37,8 @@ public class FirstHitGame extends Minigame implements Listener {
     private Objective objective;
     private Map<Player, Integer> hitCounts;
 
-    public FirstHitGame(EGServerMain plugin, String commandMainName, int MIN_PLAYER, int MAX_PLAYER, String displayGameName) {
-        super(plugin, commandMainName, MIN_PLAYER, MAX_PLAYER, displayGameName);
+    public FirstHitGame(EGServerMain plugin, MinigameItems item, String commandMainName, int MIN_PLAYER, int MAX_PLAYER, String displayGameName) {
+        super(plugin, item, commandMainName, MIN_PLAYER, MAX_PLAYER, displayGameName);
         plugin.getServer().getPluginManager().registerEvents(this, plugin);
         setGameRules(false, false, false, false, false);
         setGameTimeLimit(300); // 5분 시간 제한
@@ -176,7 +177,7 @@ public class FirstHitGame extends Minigame implements Listener {
         if (!getPlayers().contains(damaged) || !getPlayers().contains(damager)) return;
 
         if (damager.getInventory().getItemInMainHand().getType() != Material.WOOD_SWORD) {
-            damaged.sendMessage("나무 검으로 플레이어를 때려야합니다.");
+            damager.sendMessage("나무 검으로 플레이어를 때려야합니다.");
             return;
         }
 
@@ -212,7 +213,7 @@ public class FirstHitGame extends Minigame implements Listener {
             damager.sendMessage(ChatColor.GREEN + "+" + scoreToAdd + " 점을 획득했습니다! 현재 점수: " + newScore);
 
             if (newScore >= WIN_SCORE) {
-                endGame();
+                endGame(false);
             }
         }
     }

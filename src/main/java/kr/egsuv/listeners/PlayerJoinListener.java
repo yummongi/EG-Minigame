@@ -4,6 +4,7 @@ import kr.egsuv.EGServerMain;
 import kr.egsuv.chat.Prefix;
 import kr.egsuv.commands.commandList.SpawnCommand;
 import kr.egsuv.minigames.Minigame;
+import kr.egsuv.minigames.MinigamePenaltyManager;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -38,11 +39,9 @@ public class PlayerJoinListener implements Listener {
 
             // 탈주 재입장
             for (Minigame minigame : minigames) {
-                if (minigame.getDisconnectTimes().containsKey(player.getUniqueId())) {
-                    minigame.handlePlayerReconnect(player);
-                    break;
-                }
+                minigame.handlePlayerReconnect(player);
             }
+
 
             if (playerLocation != null && playerLocation.equals("로비")) {
                 player.sendTitle("§6§lENDLESS", "§e§lMINIGAME", 10, 70, 20);

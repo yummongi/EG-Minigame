@@ -109,7 +109,7 @@ public class MinigameCommand implements Command {
 
     private boolean stopGame(Player player, Minigame game) {
         if (!hasAdminPermission(player)) return true;
-        game.endGame();
+        game.endGame(false);
         player.sendMessage("§c15초 뒤 게임이 종료됩니다. 반드시 명령어를 한번만 치세요");
         return true;
     }

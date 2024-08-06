@@ -3,6 +3,7 @@ package kr.egsuv.minigames.games;
 import kr.egsuv.EGServerMain;
 import kr.egsuv.chat.Prefix;
 import kr.egsuv.minigames.Minigame;
+import kr.egsuv.minigames.MinigameItems;
 import kr.egsuv.minigames.MinigameState;
 import kr.egsuv.minigames.TeamType;
 import org.bukkit.Bukkit;
@@ -37,8 +38,8 @@ public class TeamDeathmatchGame extends Minigame implements Listener {
     (TeamType.SOLO, 10): 1명씩 10팀, 총 10명
      */
 
-    public TeamDeathmatchGame(EGServerMain plugin, String commandMainName, int MIN_PLAYER, int MAX_PLAYER, String displayGameName, boolean isTeamGame, TeamType teamType, int numberOfTeams) {
-        super(plugin, commandMainName, MIN_PLAYER, MAX_PLAYER, displayGameName, isTeamGame, teamType, numberOfTeams);
+    public TeamDeathmatchGame(EGServerMain plugin, MinigameItems item, String commandMainName, int MIN_PLAYER, int MAX_PLAYER, String displayGameName, boolean isTeamGame, TeamType teamType, int numberOfTeams) {
+        super(plugin, item,  commandMainName, MIN_PLAYER, MAX_PLAYER, displayGameName, isTeamGame, teamType, numberOfTeams);
         plugin.getServer().getPluginManager().registerEvents(this, plugin);
         setGameRules(false, false, false, true, false);
         setGameTimeLimit(300); // 5분 시간 제한
@@ -60,8 +61,9 @@ public class TeamDeathmatchGame extends Minigame implements Listener {
 
     @Override
     protected void onGameEnd() {
-        // 추가로 게임 끝날 때 구현해야할 것이 있다면 로직 작성
+
     }
+
 
     private void teleportToTeamSpawn(Player player) {
         String team = getPlayerTeam(player);
@@ -147,7 +149,7 @@ public class TeamDeathmatchGame extends Minigame implements Listener {
                     ChatColor.YELLOW + victim.getName() + ChatColor.WHITE + "님을 처치했습니다!");
 
             if (newScore >= WIN_SCORE) {
-                endGame();
+                endGame(false);
                 return;
             }
         }

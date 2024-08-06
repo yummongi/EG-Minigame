@@ -51,8 +51,8 @@ public abstract class Minigame {
     protected int gameTimeLimit;
 
     // 탈주 관련
-    private Map<UUID, Long> disconnectTimes = new HashMap<>();
-    private static final long RECONNECT_WINDOW = 300000; // 5분
+    public static final long RECONNECT_WINDOW = 300000; // 재입장 가능 5분
+    private static final long REJOIN_COOLDOWN = 30000; // 재입장 후 관전 30초
 
     protected boolean blockBreakAllowed = false;
     protected boolean blockPlaceAllowed = false;
@@ -74,6 +74,9 @@ public abstract class Minigame {
     //팀 채팅
     private Map<Player, Boolean> teamChatEnabled = new HashMap<>();
 
+    // 탈주
+    private Set<UUID> disconnectedPlayers = new HashSet<>();
+
     // kda
     private Map<Player, Integer> kills = new HashMap<>();
     private Map<Player, Integer> deaths = new HashMap<>();
@@ -93,9 +96,8 @@ public abstract class Minigame {
     protected Map<String, Team> scoreboardTeams = new HashMap<>();
 
     protected MinigameItems minigameItems;
-
     // 개인전 생성자
-    public Minigame(EGServerMain plugin, String commandMainName, int MIN_PLAYER, int MAX_PLAYER, String displayGameName) {
+    public Minigame(EGServerMain plugin, MinigameItems minigameItems, String commandMainName, int MIN_PLAYER, int MAX_PLAYER, String displayGameName) {
         this.plugin = plugin;
         this.COMMAND_MAIN_NAME = commandMainName;
         this.MIN_PLAYER = MIN_PLAYER;
@@ -113,14 +115,14 @@ public abstract class Minigame {
         }
 
         // 미니게임 관련 인스턴스 생성
-        this.minigameItems = new MinigameItems();
+        this.minigameItems = minigameItems;
 
         this.HELPER_ITEM = ItemUtils.createItem(Material.ENCHANTED_BOOK, 1, "§7[ §f게임 §a튜토리얼 §f읽기 §7]",
                 "§7§l| §f우클릭 시 게임 하는 방법을 알아볼 수 있습니다.");
     }
 
     // 팀 게임용 생성자
-    public Minigame(EGServerMain plugin, String commandMainName, int MIN_PLAYER, int MAX_PLAYER, String displayGameName, boolean isTeamGame, TeamType teamType, int numberOfTeams) {
+    public Minigame(EGServerMain plugin, MinigameItems minigameItems, String commandMainName, int MIN_PLAYER, int MAX_PLAYER, String displayGameName, boolean isTeamGame, TeamType teamType, int numberOfTeams) {
         this.plugin = plugin;
         this.COMMAND_MAIN_NAME = commandMainName;
         this.MIN_PLAYER = MIN_PLAYER;
@@ -132,6 +134,9 @@ public abstract class Minigame {
         this.teamType = teamType; // teamType을 여기서 초기화합니다.
         this.config.setTeamType(teamType);
         this.config.setNumberOfTeams(numberOfTeams);
+
+        // 미니게임 관련 인스턴스 생성
+        this.minigameItems = new MinigameItems();
 
         this.numberOfTeams = numberOfTeams;
         this.teams = new HashMap<>();
@@ -187,8 +192,14 @@ public abstract class Minigame {
 
     // 팀 채팅
     public void toggleTeamChat(Player player) {
-        if (!isTeamGame || !players.contains(player)) {
-            player.sendMessage(Prefix.SERVER + "팀 채팅은 팀 게임 중에만 사용할 수 있습니다.");
+        if (!isTeamGame || !players.contains(player) || state != MinigameState.IN_PROGRESS) {
+            player.sendMessage(Prefix.SERVER + "팀 채팅은 팀 게임 진행 중에만 사용할 수 있습니다.");
+            return;
+        }
+
+        String team = getPlayerTeam(player);
+        if (team == null) {
+            player.sendMessage(Prefix.SERVER + "팀에 속해있지 않아 팀 채팅을 사용할 수 없습니다.");
             return;
         }
 
@@ -205,30 +216,17 @@ public abstract class Minigame {
     }
 
     public void handleChat(Player player, String message) {
-        if (!players.contains(player)) {
-            return; // 게임에 참여하지 않은 플레이어의 채팅은 무시
+        if (!players.contains(player) || state != MinigameState.IN_PROGRESS) {
+            return; // 게임에 참여하지 않았거나 게임이 진행 중이 아닌 경우 무시
         }
 
-        if (isTeamGame && teamChatEnabled.getOrDefault(player, false)) {
-            String team = getPlayerTeam(player);
-            broadcastToTeam(ChatColor.GREEN + "[팀] " + player.getName() + ": " + message, team);
+        String team = getPlayerTeam(player);
+        if (isTeamGame && teamChatEnabled.getOrDefault(player, false) && team != null) {
+            broadcastToTeam(ChatColor.GREEN + "[팀 " + team + "] " + player.getName() + ": " + message, team);
         } else {
             broadcastToPlayers(ChatColor.WHITE + player.getName() + ": " + message);
         }
     }
-/*
-    protected void setupSoloScoreboard() {
-        scoreboard = Bukkit.getScoreboardManager().getNewScoreboard();
-        objective = scoreboard.registerNewObjective("game", "dummy");
-        objective.setDisplayName(ChatColor.GOLD + getDisplayGameName());
-        objective.setDisplaySlot(DisplaySlot.SIDEBAR);
-
-        for (Player player : players) {
-            objective.getScore(player.getName()).setScore(0);
-            player.setScoreboard(scoreboard);
-        }
-    }
-*/
 
     // 색상이 있는 가죽 갑옷을 지급하는 메서드
     protected void giveColoredArmor(Player player, String teamName) {
@@ -372,9 +370,31 @@ public abstract class Minigame {
             }
         }
     }
+    public boolean canJoinGame(Player player) {
+        if (state == MinigameState.ENDING) {
+            player.sendMessage(Prefix.SERVER + "게임이 종료 중이어서 참여할 수 없습니다.");
+            return false;
+        }
 
+        if (state == MinigameState.IN_PROGRESS) {
+            // 게임 진행 중에는 탈주한 플레이어만 재참여 가능
+            if (MinigamePenaltyManager.wasPlayerInGame(player.getUniqueId(), COMMAND_MAIN_NAME)) {
+                return true;
+            } else {
+                player.sendMessage(Prefix.SERVER + "게임이 이미 진행 중이어서 새로 참여할 수 없습니다.");
+                return false;
+            }
+        }
+
+        // 그 외의 경우 (WAITING, STARTING)에는 일반적인 참여 규칙 적용
+        return MinigamePenaltyManager.canJoinGame(player, COMMAND_MAIN_NAME);
+    }
     // 게임 입장
     public void joinGame(Player player) {
+        if (!canJoinGame(player)) {
+            return;
+        }
+
         if (state == MinigameState.DISABLED) {
             player.sendMessage(Prefix.SERVER + DISPLAY_GAME_NAME + "§r 게임이 현재 §c점검중§f입니다.");
         }
@@ -413,6 +433,10 @@ public abstract class Minigame {
         players.add(player);
         assignPlayerToTeam(player, teamToJoin);
         updateLobbyBossBar();
+
+        // 페널티 및 재접속 정보 초기화
+        UUID playerId = player.getUniqueId();
+        MinigamePenaltyManager.clearPlayerData(player.getUniqueId());
 
         broadcastToPlayers(Prefix.SERVER + player.getName() + "님이 " + DISPLAY_GAME_NAME + " 게임의 " +
                 (isTeamGame ? teamToJoin + " 팀 자리" : (teamToJoin + " 번 슬롯")) + "에 입장하셨습니다. (" +
@@ -474,6 +498,7 @@ public abstract class Minigame {
             }
         }.runTaskTimer(plugin, 0L, 20L);
     }
+
     protected String findTeamToJoin() {
         if (teamType == TeamType.SOLO) {
             for (Map.Entry<String, List<Player>> entry : teams.entrySet()) {
@@ -566,6 +591,11 @@ public abstract class Minigame {
             setupTeamsAndScoreboard(); // 개인전용 스코어보드 설정 메서드 (구현 필요)
         }
 
+        // 게임 시작 시 모든 플레이어의 팀 채팅 상태 초기화
+        for (Player player : players) {
+            teamChatEnabled.put(player, false);
+        }
+
         for (Player player : players) {
             // 로비에서 게임명으로 위치 변경
             setPlayerListLocation(player, COMMAND_MAIN_NAME);
@@ -585,10 +615,20 @@ public abstract class Minigame {
 
     }
 
-    public void endGame() {
+    // 비정상 종료 체크 : 파라미터
+    public void endGame(boolean isAbnormalEnd) {
+        if (state == MinigameState.ENDING) return; // 이미 종료 프로세스가 시작되었다면 중복 실행 방지
+
         onGameEnd();
         cancelCountdown();
         state = MinigameState.ENDING;
+
+
+        if (isAbnormalEnd) {
+            for (UUID playerId : disconnectedPlayers) {
+                MinigamePenaltyManager.applyPenaltyForAbnormalEnd(playerId);
+            }
+        }
 
         // 모든 플레이어를 무적 상태로 만듦
         for (Player player : players) {
@@ -598,7 +638,6 @@ public abstract class Minigame {
         }
 
         showFinalRanking();
-        resetKDStats();
         recordGameResult();
 
         if (bossBar != null) {
@@ -617,15 +656,17 @@ public abstract class Minigame {
             List<Player> playersToTeleport = new ArrayList<>(players);
 
             // 모든 플레이어의 스코어보드를 기본 스코어보드로 재설정하고 무적 상태 해제
-            for (Player player : playersToTeleport) {
-                plugin.teleportToSpawn(player);
-                player.setScoreboard(Bukkit.getScoreboardManager().getNewScoreboard());
+            for (Player player : new ArrayList<>(players)) {
+                gameQuitPlayer(player);
                 player.setInvulnerable(false);
+                if (!disconnectedPlayers.contains(player.getUniqueId())) {
+                    MinigamePenaltyManager.clearPlayerData(player.getUniqueId());
+                }
             }
 
             broadcastToServer(Prefix.SERVER + DISPLAY_GAME_NAME + "§r 게임이 종료되었습니다!");
-
             resetGame();
+            state = MinigameState.WAITING;
         }, 300L); // 15초 (20틱 * 15 = 300틱)
     }
 
@@ -778,37 +819,8 @@ public abstract class Minigame {
             checkGameState();
             updateLobbyBossBar();
             teamChatEnabled.remove(player);
+            checkTeamBalance();
         }
-    }
-
-    //게임 탈주 로직
-    public void handlePlayerDisconnect(Player player) {
-        disconnectTimes.put(player.getUniqueId(), System.currentTimeMillis());
-        teamChatEnabled.remove(player);
-        checkTeamBalance();
-    }
-
-    public void handlePlayerReconnect(Player player) {
-        Long disconnectTime = disconnectTimes.get(player.getUniqueId());
-        if (disconnectTime != null && System.currentTimeMillis() - disconnectTime < RECONNECT_WINDOW) {
-            rejoinPlayer(player);
-        } else {
-            player.sendMessage(Prefix.SERVER + "재접속 시간이 초과되어 게임에 다시 참여할 수 없습니다.");
-            teamChatEnabled.remove(player);
-        }
-        disconnectTimes.remove(player.getUniqueId());
-    }
-
-    private void rejoinPlayer(Player player) {
-        // 플레이어를 게임에 다시 참여시키는 로직
-        players.add(player);
-        String team = playerTeams.get(player.getUniqueId());
-        if (team != null) {
-            teams.get(team).add(player);
-        }
-        player.teleport(getRandomSpawnLocation(player));
-        giveGameItems(player);
-        player.sendMessage(Prefix.SERVER + "게임에 다시 참여하셨습니다.");
     }
 
     protected void checkTeamBalance() {
@@ -818,18 +830,39 @@ public abstract class Minigame {
                 teamCounts.put(entry.getKey(), entry.getValue().size());
             }
 
-            if (teamCounts.containsValue(0)) {
+            int minTeamSize = Collections.min(teamCounts.values());
+            int totalPlayers = teamCounts.values().stream().mapToInt(Integer::intValue).sum();
+
+            if (minTeamSize == 0) {
                 // 한 팀의 모든 플레이어가 나갔을 경우
                 broadcastToPlayers(Prefix.SERVER + "팀 밸런스가 무너져 게임을 종료합니다.");
-                endGame();
-            } else if (Collections.min(teamCounts.values()) < MIN_PLAYER / teams.size() / 2) {
+                endGame(true);
+            } else if (totalPlayers < MIN_PLAYER) {
+                // 전체 플레이어 수가 최소 인원 미만일 경우
+                broadcastToPlayers(Prefix.SERVER + "인원 부족으로 게임을 종료합니다.");
+                endGame(true);
+            } else if (minTeamSize < MIN_PLAYER / teams.size() / 2) {
                 // 한 팀의 플레이어 수가 최소 인원의 절반 이하로 떨어졌을 경우
+                broadcastToPlayers(Prefix.SERVER + "팀 밸런스를 위해 팀을 재조정합니다.");
                 balanceTeams();
             }
         }
     }
 
+    /*
+    팀 재조정 동안 모든 플레이어를 일시적으로 관전 모드로 변경합니다. 이는 재조정 과정 중 플레이어 간 상호작용을 방지합니다.
+    각 플레이어를 새 팀의 스폰 위치로 텔레포트합니다.
+    팀이 변경된 플레이어에게만 개별적으로 메시지를 보냅니다.
+    모든 재조정이 완료된 후 1초의 지연 시간을 두고 플레이어들을 서바이벌 모드로 변경하고, 체력과 배고픔을 최대로 채웁니다.
+    게임 아이템을 다시 지급합니다. 이는 팀 변경으로 인한 장비 차이를 방지합니다.
+     */
+
     private void balanceTeams() {
+        Map<Player, Integer> playerScores = new HashMap<>(scores);
+        Map<Player, Integer> playerKills = new HashMap<>(kills);
+        Map<Player, Integer> playerDeaths = new HashMap<>(deaths);
+        Map<Player, Boolean> playerTeamChatStates = new HashMap<>(teamChatEnabled);
+
         List<Player> allPlayers = new ArrayList<>(players);
         Collections.shuffle(allPlayers);
         Map<String, List<Player>> newTeams = new HashMap<>();
@@ -838,24 +871,80 @@ public abstract class Minigame {
         }
 
         int playersPerTeam = allPlayers.size() / teams.size();
+        int extraPlayers = allPlayers.size() % teams.size();
         int currentTeamIndex = 0;
+
+        // 모든 플레이어를 잠시 관전 모드로 변경
+        for (Player player : allPlayers) {
+            player.setGameMode(GameMode.SPECTATOR);
+        }
+
         for (Player player : allPlayers) {
             String teamName = (String) teams.keySet().toArray()[currentTeamIndex];
             newTeams.get(teamName).add(player);
-            if (newTeams.get(teamName).size() >= playersPerTeam) {
+            if (newTeams.get(teamName).size() >= playersPerTeam + (extraPlayers > 0 ? 1 : 0)) {
                 currentTeamIndex = (currentTeamIndex + 1) % teams.size();
+                if (extraPlayers > 0) extraPlayers--;
             }
         }
 
         teams = newTeams;
         for (Map.Entry<String, List<Player>> entry : teams.entrySet()) {
             for (Player player : entry.getValue()) {
-                assignPlayerToTeam(player, entry.getKey());
+                String oldTeam = getPlayerTeam(player);
+                String newTeam = entry.getKey();
+
+                assignPlayerToTeam(player, newTeam);
+
+                // 플레이어의 점수, 킬/데스, 팀 채팅 상태 유지
+                scores.put(player, playerScores.getOrDefault(player, 0));
+                kills.put(player, playerKills.getOrDefault(player, 0));
+                deaths.put(player, playerDeaths.getOrDefault(player, 0));
+                teamChatEnabled.put(player, playerTeamChatStates.getOrDefault(player, false));
+
+                // 팀 채팅 상태 유지, 단 팀이 변경된 경우 새 팀의 채팅으로 설정
+                if (!oldTeam.equals(newTeam)) {
+                    teamChatEnabled.put(player, false);  // 팀이 변경되면 팀 채팅을 기본적으로 비활성화
+                    player.sendMessage(Prefix.SERVER + "당신의 팀이 " + oldTeam + "에서 " + newTeam + "으로 변경되었습니다. 팀 채팅이 비활성화되었습니다.");
+                } else {
+                    teamChatEnabled.put(player, playerTeamChatStates.getOrDefault(player, false));
+                }
+
+                // 새 팀의 스폰 위치로 텔레포트
+                Location newSpawn = getRandomSpawnLocation(player);
+                player.teleport(newSpawn);
+
+                // 팀이 변경된 경우에만 메시지 전송
+                if (!oldTeam.equals(newTeam)) {
+                    player.sendMessage(Prefix.SERVER + "당신의 팀이 " + oldTeam + "에서 " + newTeam + "으로 변경되었습니다.");
+                }
             }
         }
+
+        // 스코어보드 재설정
+        setupTeamsAndScoreboard();
+
+        // 짧은 지연 후 모든 플레이어를 서바이벌 모드로 변경
+        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            for (Player player : allPlayers) {
+                player.setGameMode(GameMode.SURVIVAL);
+                player.setHealth(player.getMaxHealth());
+                player.setFoodLevel(20);
+                player.getInventory().clear();  // 인벤토리 초기화
+                giveGameItems(player);
+                updatePlayerScoreboard(player);
+            }
+        }, 20L); // 1초 후
+
         broadcastToPlayers(Prefix.SERVER + "팀 밸런스를 위해 팀이 재조정되었습니다.");
     }
 
+    private void updatePlayerScoreboard(Player player) {
+        if (scoreboard != null && objective != null) {
+            player.setScoreboard(scoreboard);
+            objective.getScore(player.getName()).setScore(scores.getOrDefault(player, 0));
+        }
+    }
     protected void startGameTimer() {
         bossBar = Bukkit.createBossBar("남은 시간: " + gameTimeLimit + "초", BarColor.BLUE, BarStyle.SOLID);
         for (Player player : players) {
@@ -874,7 +963,7 @@ public abstract class Minigame {
                     }
                     this.cancel();
                     if (state == MinigameState.IN_PROGRESS) {
-                        endGame();
+                        endGame(false);
                     }
                     return;
                 }
@@ -967,6 +1056,7 @@ public abstract class Minigame {
     }
 
     private void resetGame() {
+        resetKDStats();
         allPlayerResetScoreboard();
         players.clear();
         scores.clear();
@@ -974,6 +1064,10 @@ public abstract class Minigame {
         teams.clear();
         teamChatEnabled.clear();
         resetKDStats();
+        disconnectedPlayers.clear();
+        for (Player player : players) {
+            MinigamePenaltyManager.clearPlayerData(player.getUniqueId());
+        }
 
         if (!isTeamGame) {
             for (int i = 1; i <= MAX_PLAYER; i++) {
@@ -986,10 +1080,8 @@ public abstract class Minigame {
             }
         }
 
-
         scoreboardTeams.clear();
         current_player = 0;
-        state = MinigameState.WAITING;
         countdownTime = DEFAULT_COUNTDOWN_TIME; // 카운트다운 시간 초기화
 
     }
@@ -1008,17 +1100,112 @@ public abstract class Minigame {
         state = MinigameState.WAITING;
     }
 
-    public void handlePlayerQuit(Player player) {
+    // 자발적인 명령어로 탈주했을 때
+    public void handleCommandQuit(Player player) {
+        if (state == MinigameState.IN_PROGRESS) {
+            MinigamePenaltyManager.handlePlayerDisconnect(player, COMMAND_MAIN_NAME);
+            disconnectedPlayers.add(player.getUniqueId());
+        }
         gameQuitPlayer(player);
-        handlePlayerDisconnect(player);
-        broadcastToPlayers(Prefix.SERVER + player.getName() + "님이 게임에서 퇴장하셨습니다.");
-        removePlayerFromScoreboard(player);
+        broadcastToPlayers(Prefix.SERVER + player.getName() + "님이 " + getDisplayGameName() + " 게임에서 퇴장하셨습니다.");
+    }
+
+    public void handlePlayerQuit(Player player) {
+        if (state == MinigameState.IN_PROGRESS) {
+            MinigamePenaltyManager.handlePlayerDisconnect(player, COMMAND_MAIN_NAME);
+            disconnectedPlayers.add(player.getUniqueId());
+        }
+        gameQuitPlayer(player);
+        broadcastToPlayers(Prefix.SERVER + player.getName() + "님이 " + getDisplayGameName() + " 게임에서 퇴장하셨습니다.");
+    }
+
+    public void handlePlayerReconnect(Player player) {
+        if (state == MinigameState.ENDING) {
+            player.sendMessage(Prefix.SERVER + "게임이 종료 중이어서 재참여할 수 없습니다.");
+            plugin.teleportToSpawn(player);
+            return;
+        }
+        if (state == MinigameState.STARTING) {
+            plugin.teleportToSpawn(player);
+            return;
+        }
+        if (MinigamePenaltyManager.handlePlayerReconnect(player, COMMAND_MAIN_NAME)) {
+            rejoinPlayer(player);
+            player.sendMessage(Prefix.SERVER + "게임 균형을 위해 30초 동안 관전 모드로 설정됩니다.");
+        } else {
+            plugin.teleportToSpawn(player);
+        }
+    }
+
+    public void rejoinPlayer(Player player) {
+        UUID playerId = player.getUniqueId();
+
+        if (players.contains(player)) {
+            player.sendMessage(Prefix.SERVER + "이미 게임에 참여 중입니다.");
+            return;
+        }
+
+        players.add(player);
+        current_player++;
+
+        String team = playerTeams.get(playerId);
+        if (team != null && !teams.get(team).contains(player)) {
+            teams.get(team).add(player);
+        } else if (team == null) {
+            team = findTeamToJoin();
+            if (team != null) {
+                assignPlayerToTeam(player, team);
+            } else {
+                player.sendMessage(Prefix.SERVER + "참여 가능한 팀이 없습니다.");
+                players.remove(player);
+                current_player--;
+                return;
+            }
+        }
+
+        // 이전 팀 채팅 상태 복원
+        boolean wasTeamChatEnabled = teamChatEnabled.getOrDefault(player, false);
+        teamChatEnabled.put(player, wasTeamChatEnabled);
+
+        // 플레이어의 이전 점수와 킬/데스 복원
+        scores.putIfAbsent(player, 0);
+        kills.putIfAbsent(player, 0);
+        deaths.putIfAbsent(player, 0);
+
+        // 플레이어를 관전 모드로 설정
+        player.setGameMode(GameMode.SPECTATOR);
+        player.teleport(getRandomSpawnLocation(player));
+        player.sendMessage(Prefix.SERVER + "게임에 다시 참여하셨습니다. 30초 동안 관전 모드입니다.");
+
+        // 스코어보드에 플레이어 추가
+        if (scoreboard != null && objective != null) {
+            objective.getScore(player.getName()).setScore(scores.get(player));
+        }
+
+        // BossBar에 플레이어 추가
+        if (bossBar != null) {
+            bossBar.addPlayer(player);
+        }
+
+        // 30초 후 플레이어 상태 복구
+        Bukkit.getScheduler().runTaskLater(plugin, () -> restorePlayerAfterRejoin(player), REJOIN_COOLDOWN / 50);
+    }
+
+    private void restorePlayerAfterRejoin(Player player) {
+        if (players.contains(player) && state == MinigameState.IN_PROGRESS) {
+            player.setGameMode(GameMode.SURVIVAL);
+            giveGameItems(player);
+            player.teleport(getRandomSpawnLocation(player));
+            player.setHealth(player.getMaxHealth());
+            player.setFoodLevel(20);
+            player.sendMessage(Prefix.SERVER + "관전 모드가 해제되었습니다. 게임에 참여할 수 있습니다.");
+        }
     }
 
     protected void checkGameState() {
         if (getState() == MinigameState.IN_PROGRESS && getPlayers().size() < MIN_PLAYER) {
             broadcastToPlayers(Prefix.SERVER + "인원 부족으로 자동으로 게임이 종료됩니다.");
-            endGame();
+            endGame(true);
         } else if (getState() == MinigameState.STARTING && getPlayers().size() < MIN_PLAYER) {
             cancelCountdown();
             broadcastToPlayers(Prefix.SERVER + "인원 부족으로 게임 시작이 취소되었습니다.");
@@ -1114,8 +1301,7 @@ public abstract class Minigame {
     public BossBar getBossBar() { return bossBar; }
     public BossBar getLobbyBossBar() { return lobbyBossBar; }
     public int getGameTimeLimit() { return gameTimeLimit; }
-    // Getter for disconnectTimes
-    public Map<UUID, Long> getDisconnectTimes() { return disconnectTimes; }
+
 
 
     public boolean isBlockBreakAllowed() { return blockBreakAllowed; }

@@ -7,9 +7,7 @@ import kr.egsuv.config.ConfigManager;
 import kr.egsuv.data.DataManager;
 import kr.egsuv.listeners.*;
 import kr.egsuv.commands.CommandManager;
-import kr.egsuv.minigames.Minigame;
-import kr.egsuv.minigames.MinigameGui;
-import kr.egsuv.minigames.TeamType;
+import kr.egsuv.minigames.*;
 import kr.egsuv.minigames.games.FirstHitGame;
 import kr.egsuv.minigames.games.TeamDeathmatchGame;
 import kr.egsuv.ranking.RankingManager;
@@ -34,6 +32,8 @@ public final class EGServerMain extends JavaPlugin implements Listener {
     private SpawnCommand spawnCommand;
     private RankingManager rankingManager;
     private DataManager dataManager;
+    private MinigameItems minigameItems;
+    private MinigamePenaltyManager minigamePenaltyManager;
 
     // 미니게임
     private FirstHitGame firstHitGame;
@@ -60,14 +60,18 @@ public final class EGServerMain extends JavaPlugin implements Listener {
         spawnCommand = new SpawnCommand(miniGamesGui);
         rankingManager = new RankingManager();
         dataManager = new DataManager();
+        minigameItems = new MinigameItems();
+        minigamePenaltyManager = new MinigamePenaltyManager();
+
+        MinigamePenaltyManager.startCleanupTask(this);
 
         // 미니게임 추가
-        firstHitGame = new FirstHitGame(this, "fth", 2, 8,
+        firstHitGame = new FirstHitGame(this, minigameItems, "fth", 2, 8,
                 "§a선빵 게임§r");
         minigameList.add(firstHitGame);
 
         // TeamDeathmatchGame 추가
-        teamDeathmatchGame = new TeamDeathmatchGame(this, "tdm", 4, 12,
+        teamDeathmatchGame = new TeamDeathmatchGame(this, minigameItems, "tdm", 4, 12,
                 "§c팀 데스매치§r", true, TeamType.DUO, 2);
         minigameList.add(teamDeathmatchGame);
 
