@@ -9,10 +9,8 @@ import kr.egsuv.util.PotionUtils;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.WeatherType;
-import org.bukkit.boss.BossBar;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.PlayerInventory;
-import org.bukkit.metadata.FixedMetadataValue;
 import org.bukkit.potion.PotionEffectType;
 
 
@@ -84,8 +82,9 @@ public class SpawnCommand implements Command {
         for (Minigame minigame : plugin.getMinigameList()) {
             if (minigame.getPlayers().contains(player)) {
                 minigame.gameQuitPlayer(player);
-                if (minigame.getBossBar() != null) {
-                    minigame.getBossBar().removePlayer(player);
+                if (minigame.getTimerBossBar() != null) {
+                    minigame.getTimerBossBar().removePlayer(player);
+                    minigame.getTimerBossBar().removePlayer(player);
                 }
                 break;
             }

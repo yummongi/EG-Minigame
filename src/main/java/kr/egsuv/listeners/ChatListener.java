@@ -1,14 +1,15 @@
 package kr.egsuv.listeners;
 
+import io.papermc.paper.event.player.AsyncChatEvent;
 import kr.egsuv.EGServerMain;
 import kr.egsuv.chat.Prefix;
 import kr.egsuv.minigames.Minigame;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
-import org.bukkit.event.player.AsyncPlayerChatEvent;
 
 import java.util.UUID;
 
@@ -17,11 +18,13 @@ public class ChatListener implements Listener {
     private final EGServerMain plugin = EGServerMain.getInstance();
 
     @EventHandler
-    public void onPlayerChat(AsyncPlayerChatEvent event) {
+    public void onPlayerChat(AsyncChatEvent event) {
         Player player = event.getPlayer();
         UUID playerUUID = player.getUniqueId();
         String prefix = getPrefix(player);
-        String message = event.getMessage();
+        Component messageComponent = event.message();
+        String message = PlainTextComponentSerializer.plainText().serialize(messageComponent);
+
         String playerLocation = plugin.getPlayerList().get(playerUUID);
 
         if (playerLocation == null) {
@@ -37,7 +40,7 @@ public class ChatListener implements Listener {
             if (currentGame != null && currentGame.isTeamGame()) {
                 currentGame.handleChat(player, message);
             } else {
-                String formattedMessage = ChatColor.RESET + prefix + player.getName() + " > " + message;
+                String formattedMessage = "§r"+ prefix + player.getName() + " > " + message;
                 for (Player recipient : Bukkit.getOnlinePlayers()) {
                     String recipientLocation = plugin.getPlayerList().get(recipient.getUniqueId());
                     if (recipientLocation == null) {

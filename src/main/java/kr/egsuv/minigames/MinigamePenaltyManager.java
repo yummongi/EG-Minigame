@@ -2,6 +2,7 @@ package kr.egsuv.minigames;
 
 import kr.egsuv.EGServerMain;
 import kr.egsuv.chat.Prefix;
+import net.kyori.adventure.text.Component;
 import org.bukkit.entity.Player;
 import org.bukkit.scheduler.BukkitRunnable;
 
@@ -22,13 +23,8 @@ public class MinigamePenaltyManager {
     private static Map<UUID, Long> penaltyTimes = new HashMap<>();
     private static Map<UUID, String> lastGamePlayed = new HashMap<>();
 
-    public static void handlePlayerDisconnect(Player player, String gameName) {
-        UUID playerId = player.getUniqueId();
-        long currentTime = System.currentTimeMillis();
-        disconnectTimes.put(playerId, currentTime);
-        lastGamePlayed.put(playerId, gameName);
-
-    }
+    // 자발적 퇴장 했는가?
+    private static Map<UUID, Boolean> voluntaryQuits = new HashMap<>();
 
     public static boolean handlePlayerReconnect(Player player, String gameName) {
         UUID playerId = player.getUniqueId();
@@ -71,16 +67,37 @@ public class MinigamePenaltyManager {
                     return false;
                 }
             } else {
-                penaltyTimes.put(playerId, currentTime + PENALTY_DURATION);
+                if (voluntaryQuits.getOrDefault(playerId, false)) {
+                    penaltyTimes.put(playerId, currentTime + PENALTY_DURATION);
+                    player.sendMessage(Prefix.SERVER + "자발적 퇴장 후 5분이 지나 10분 동안 모든 게임 참여가 제한됩니다.");
+                }
                 disconnectTimes.remove(playerId);
                 lastGamePlayed.remove(playerId);
-                player.sendMessage(Prefix.SERVER + "재접속 시간이 초과되어 10분 동안 모든 게임 참여가 제한됩니다.");
+                voluntaryQuits.remove(playerId);
                 return false;
             }
         }
 
         return true;
     }
+
+    public static void handlePlayerDisconnect(Player player, String gameName) {
+        UUID playerId = player.getUniqueId();
+        long currentTime = System.currentTimeMillis();
+        disconnectTimes.put(playerId, currentTime);
+        lastGamePlayed.put(playerId, gameName);
+        voluntaryQuits.put(playerId, false); // 기본적으로 비자발적 퇴장으로 설정
+    }
+
+    public static void handleVoluntaryQuit(Player player, String gameName) {
+        UUID playerId = player.getUniqueId();
+        long currentTime = System.currentTimeMillis();
+        disconnectTimes.put(playerId, currentTime);
+        lastGamePlayed.put(playerId, gameName);
+        voluntaryQuits.put(playerId, true);
+        player.sendMessage(Component.text(Prefix.SERVER + "§c자발적으로 게임에 나갔습니다. 5분 이내로 다시 재입장 하지 않으면 탈주 패널티가 적용됩니다."));
+    }
+
 
     public static void clearPlayerData(UUID playerId) {
         disconnectTimes.remove(playerId);

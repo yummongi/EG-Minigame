@@ -6,6 +6,7 @@ public enum TeamType {
     TRIPLE(3),
     SQUAD(4);
 
+
     private final int playersPerTeam;
 
     TeamType(int playersPerTeam) {

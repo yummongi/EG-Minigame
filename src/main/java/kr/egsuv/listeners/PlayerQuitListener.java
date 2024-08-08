@@ -22,7 +22,7 @@ public class PlayerQuitListener implements Listener {
     public void onPlayerQuit(PlayerQuitEvent event) {
         Player player = event.getPlayer();
 
-        event.setQuitMessage(null);
+        event.quitMessage(null);
         plugin.getPlayerList().remove(player.getUniqueId());
 
         for (Minigame minigame : minigames) {

@@ -3,6 +3,8 @@ package kr.egsuv.commands.commandList;
 import kr.egsuv.EGServerMain;
 import kr.egsuv.chat.Prefix;
 import kr.egsuv.commands.Command;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import net.md_5.bungee.api.ChatMessageType;
 import net.md_5.bungee.api.chat.TextComponent;
 import org.bukkit.entity.Player;
@@ -106,7 +108,8 @@ public class MegaphoneCommand implements Command {
                 }
 
                 if (currentMessage != null) {
-                    player.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(currentMessage));
+                    Component messageComponent = LegacyComponentSerializer.legacySection().deserialize(currentMessage);
+                    player.sendActionBar(messageComponent);
                     count++;
                 }
             }

@@ -1,6 +1,7 @@
 name: EGServer
 version: 1.0
 main: kr.egsuv.EGServerMain
+api-version: 1.21
 commands:
   스폰:
     description: Teleport to spawn.

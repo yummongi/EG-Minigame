@@ -5,7 +5,8 @@ public enum MinigameState {
     STARTING("시작중"),
     IN_PROGRESS("진행중"),
     ENDING("종료중"),
-    DISABLED("비활성화");
+    DISABLED("비활성화"),
+    REPAIRING("복구중");
 
     private final String displayName;
 

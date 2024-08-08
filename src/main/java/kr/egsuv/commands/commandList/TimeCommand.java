@@ -16,7 +16,7 @@ public class TimeCommand implements Command {
 
         String formattedNow = now.format(formatter);
 
-        player.sendMessage(ChatColor.GRAY + "현재 서버 시간: " + ChatColor.GREEN+ formattedNow);
+        player.sendMessage("§6현재 서버 시간: §e" + formattedNow);
 
         return true;
     }

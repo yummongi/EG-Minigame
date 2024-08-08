@@ -7,9 +7,14 @@ import kr.egsuv.minigames.MinigameItems;
 import kr.egsuv.minigames.MinigameState;
 import kr.egsuv.minigames.TeamType;
 import kr.egsuv.util.ItemUtils;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextDecoration;
+import net.kyori.adventure.title.Title;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
+import org.bukkit.Sound;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -20,16 +25,18 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
+import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.scoreboard.DisplaySlot;
 import org.bukkit.scoreboard.Objective;
 import org.bukkit.scoreboard.Score;
 import org.bukkit.scoreboard.Scoreboard;
 
+import java.time.Duration;
 import java.util.*;
 
 public class FirstHitGame extends Minigame implements Listener {
 
-    private static final int WIN_SCORE = 100;
+    private static final int WIN_SCORE = 50;
     private static final int DEBUFF_SCORE_THRESHOLD = 70; // 디버프를 받는 점수 기준
     private static final int BONUS_EFFECT_INTERVAL = 50; // 버프를 받는 시간 기준 (초)
 
@@ -37,21 +44,29 @@ public class FirstHitGame extends Minigame implements Listener {
     private Objective objective;
     private Map<Player, Integer> hitCounts;
 
-    public FirstHitGame(EGServerMain plugin, MinigameItems item, String commandMainName, int MIN_PLAYER, int MAX_PLAYER, String displayGameName) {
-        super(plugin, item, commandMainName, MIN_PLAYER, MAX_PLAYER, displayGameName);
+    // 버프 관리
+    private BukkitTask buffTask;
+
+    public FirstHitGame(EGServerMain plugin, MinigameItems item, String commandMainName, int MIN_PLAYER, int MAX_PLAYER, String displayGameName, boolean useBlockRestore) {
+        super(plugin, item, commandMainName, MIN_PLAYER, MAX_PLAYER, displayGameName, useBlockRestore);
         plugin.getServer().getPluginManager().registerEvents(this, plugin);
-        setGameRules(false, false, false, false, false);
-        setGameTimeLimit(300); // 5분 시간 제한
+        setGameRules(true, true, false, false, false);
+        setGameTimeLimit(30); // 디버깅 테스트 5분 시간 제한
         hitCounts = new HashMap<>();
     }
 
     @Override
     public void showRules(Player player) {
-        player.sendMessage(ChatColor.YELLOW + "게임 규칙:");
-        player.sendMessage(ChatColor.GREEN + "1. 다른 플레이어를 공격하여 점수를 획득하세요.");
-        player.sendMessage(ChatColor.GREEN + "2. 히트 점수를 높여서 상위 랭킹에 오르세요.");
-        player.sendMessage(ChatColor.GREEN + "3. 첫 타격을 가하는 플레이어에게 보너스 점수가 주어집니다.");
-        player.sendMessage(ChatColor.GREEN + "4. 파워업 아이템을 활용하여 전투에서 유리한 위치를 차지하세요.");
+        player.sendMessage("§6게임 규칙:");
+        player.sendMessage("§e1. 다른 플레이어를 공격하여 점수를 획득하세요.");
+        player.sendMessage("§e2. 히트 점수를 높여서 상위 랭킹에 오르세요.");
+        player.sendMessage("§e3. 첫 타격을 가하는 플레이어에게 보너스 점수가 주어집니다.");
+        player.sendMessage("§e4. 파워업 아이템을 활용하여 전투에서 유리한 위치를 차지하세요.");
+    }
+
+    @Override
+    protected void resetGameSpecificData() {
+
     }
 
 
@@ -60,31 +75,39 @@ public class FirstHitGame extends Minigame implements Listener {
         for (Player player : getPlayers()) {
             scores.put(player, 0);
             giveGameItems(player);
-            player.sendTitle(ChatColor.GREEN + "게임 시작!", ChatColor.YELLOW + "100점을 달성하세요!", 10, 70, 20);
-            player.playSound(player.getLocation(), "entity.player.levelup", 1.0f, 1.0f);
+
+            // Use the adventure API for titles
+            player.showTitle(Title.title(
+                    Component.text("§a게임 시작!").color(NamedTextColor.GREEN),
+                    Component.text("100점을 달성하세요!").color(NamedTextColor.YELLOW),
+                    Title.Times.times(Duration.ofMillis(500), Duration.ofMillis(1400), Duration.ofMillis(500))
+            ));
+
+            // Play sound using key
+            player.playSound(player.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1.0f, 1.0f);
         }
         setupScoreboard();
         updateScoreboard();
-
-        // 일정 시간마다 보너스 포션 효과 부여
-        timeToBuff();
+        startBuffTimer();
     }
 
-    private void timeToBuff() {
-        Bukkit.getScheduler().runTaskTimer(plugin, () -> {
-            for (Player player : getPlayers()) {
-                player.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 200, 1)); // 예시로 스피드 효과 부여
-                player.sendMessage(ChatColor.LIGHT_PURPLE + "보너스 효과를 받았습니다!");
+    private void startBuffTimer() {
+        buffTask = Bukkit.getScheduler().runTaskTimer(plugin, () -> {
+            if (getState() == MinigameState.IN_PROGRESS) {
+                for (Player player : getPlayers()) {
+                    player.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 200, 1));
+                    player.sendMessage(ChatColor.LIGHT_PURPLE + "보너스 효과를 받았습니다!");
+                }
             }
-        }, 0, BONUS_EFFECT_INTERVAL * 20L); // 20L은 1초를 의미
+        }, 0, BONUS_EFFECT_INTERVAL * 20L);
     }
 
 
 
     private void setupScoreboard() {
         scoreboard = Bukkit.getScoreboardManager().getNewScoreboard();
-        objective = scoreboard.registerNewObjective("score", "dummy");
-        objective.setDisplayName(ChatColor.BOLD + "" + ChatColor.AQUA + "선빵 게임");
+        objective = scoreboard.registerNewObjective("score", "dummy",
+                Component.text("선빵 게임").color(NamedTextColor.AQUA).decorate(TextDecoration.BOLD));
         objective.setDisplaySlot(DisplaySlot.SIDEBAR);
     }
 
@@ -123,7 +146,7 @@ public class FirstHitGame extends Minigame implements Listener {
 
             // 특정 점수 이상인 플레이어에게 디버프 부여
             if (score >= DEBUFF_SCORE_THRESHOLD) {
-                player.addPotionEffect(new PotionEffect(PotionEffectType.SLOW, 200, 1));
+                player.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 200, 1));
                 player.sendMessage(ChatColor.RED.toString() + DEBUFF_SCORE_THRESHOLD + "점수가 넘어 디버프 효과를 받았습니다!");
             }
 
@@ -137,17 +160,29 @@ public class FirstHitGame extends Minigame implements Listener {
     }
     @Override
     protected void onGameEnd() {
+        if (buffTask != null) {
+            buffTask.cancel();
+        }
         for (Player player : getPlayers()) {
-            player.sendTitle(ChatColor.RED + "게임 종료!", ChatColor.YELLOW + "결과를 확인하세요.", 10, 70, 20);
-            player.playSound(player.getLocation(), "entity.ender_dragon.death", 1.0f, 1.0f);
+            // Use the adventure API for titles
+            player.showTitle(Title.title(
+                    Component.text("게임 종료!").color(NamedTextColor.RED),
+                    Component.text("결과를 확인하세요.").color(NamedTextColor.YELLOW),
+                    Title.Times.times(Duration.ofMillis(500), Duration.ofMillis(1400), Duration.ofMillis(500))
+            ));
+
+            // Play sound using key
+            player.playSound(player.getLocation(), Sound.MUSIC_DRAGON, 0.5f, 0.5f);
         }
     }
+
+
 
     @Override
     protected void giveGameItems(Player player) {
         player.getInventory().clear();
         player.getInventory().addItem(
-                ItemUtils.createItem(Material.WOOD_SWORD, 1, "§7§l긴 나무 검", Enchantment.KNOCKBACK, 3, "§a| §7유저를 찾아서 얼른 때리자!"));
+                ItemUtils.createItem(Material.WOODEN_SWORD, 1, "§7§l긴 나무 검", Enchantment.KNOCKBACK, 3, "§a| §7유저를 찾아서 얼른 때리자!"));
         player.getInventory().addItem(new ItemStack(Material.GOLDEN_APPLE, 3));  // 파워업 아이템
 
     }
@@ -164,6 +199,18 @@ public class FirstHitGame extends Minigame implements Listener {
         }
     }
 
+    @Override
+    public void applyCustomKillStreakBonus(Player player, int streak) {
+        if (streak >= 4) {
+            player.addPotionEffect(new PotionEffect(PotionEffectType.INSTANT_DAMAGE, 100, 0));
+        }
+    }
+
+    @Override
+    public void removeCustomKillStreakEffects(Player player) {
+        player.removePotionEffect(PotionEffectType.INSTANT_DAMAGE);
+    }
+
     @EventHandler
     public void onPlayerDamage(EntityDamageByEntityEvent event) {
         if (getState() != MinigameState.IN_PROGRESS) return;
@@ -176,10 +223,13 @@ public class FirstHitGame extends Minigame implements Listener {
 
         if (!getPlayers().contains(damaged) || !getPlayers().contains(damager)) return;
 
-        if (damager.getInventory().getItemInMainHand().getType() != Material.WOOD_SWORD) {
+        if (damager.getInventory().getItemInMainHand().getType() != Material.WOODEN_SWORD) {
             damager.sendMessage("나무 검으로 플레이어를 때려야합니다.");
             return;
         }
+
+        // 즉시 사망 처리
+        event.setDamage(1000); // 매우 큰 데미지 값을 설정하여 즉시 사망하도록 함
 
         if (event.getDamage() > 0) {  // 데미지를 입혔을 때만 점수 증가
             int hits = hitCounts.getOrDefault(damager, 0) + 1;
@@ -189,15 +239,17 @@ public class FirstHitGame extends Minigame implements Listener {
             switch (hits) {
                 case 1:
                     scoreToAdd = 10;
-                    broadcastToPlayers(ChatColor.RED + damager.getName() + " §f님이 §7" + damaged.getName() + " §f님을 §c첫번째§f로 타격했습니다! §a[ +10점 ]");
+                    broadcastToPlayers(Component.text("§6"+damager.getName() + " §f님이 §7" + damaged.getName() + " §f님을 §c첫번째§f로 타격했습니다! §a[ +10점 ]"));
                     break;
                 case 2:
                     scoreToAdd = 7;
-                    broadcastToPlayers(ChatColor.RED + damager.getName() + " §f님이 §7" + damaged.getName() + " §f님을 §c두번째§f로 타격했습니다! §a[ +7점 ]");
+                    broadcastToPlayers(Component.text("§6"+damager.getName() + " §f님이 §7" + damaged.getName() + " §f님을 §c두번째§f로 타격했습니다! §a[ +7점 ]"));
+
                     break;
                 case 3:
                     scoreToAdd = 4;
-                    broadcastToPlayers(ChatColor.RED + damager.getName() + " §f님이 §7" + damaged.getName() + " §f님을 §c세번째§f로 타격했습니다! §a[ +4점 ]");
+                    broadcastToPlayers(Component.text("§6"+damager.getName() + " §f님이 §7" + damaged.getName() + " §f님을 §c세번째§f로 타격했습니다! §a[ +4점 ]"));
+
                     break;
                 default:
                     scoreToAdd = 1;
@@ -223,9 +275,9 @@ public class FirstHitGame extends Minigame implements Listener {
         Player killer = player.getKiller();
 
         if (killer != null) {
-            broadcastToPlayers(ChatColor.RED + player.getName() + ChatColor.YELLOW + "님이 " + ChatColor.RED + killer.getName() + ChatColor.YELLOW + "님에 의해 죽었습니다. 리스폰 시간: 3초");
+            broadcastToPlayers(Component.text("§c" + player.getName() + "§6님이 §c" + killer.getName() + "§e님에 의해 죽었습니다. 리스폰 시간: 3초") );
         } else {
-            broadcastToPlayers(ChatColor.RED + player.getName() + ChatColor.YELLOW + "님이 죽었습니다. 리스폰 시간: 3초");
+            broadcastToPlayers(Component.text("§c" + player.getName() + "§6님이 죽었습니다. 리스폰 시간: 3초"));
         }
 
         if (getPlayers().contains(player)) {

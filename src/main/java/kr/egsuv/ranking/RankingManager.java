@@ -111,4 +111,22 @@ public class RankingManager {
         long daysSinceLastPlay = (System.currentTimeMillis() - lastPlayTime) / (1000 * 60 * 60 * 24);
         return Math.max(1.0, MAX_RECENT_ACTIVITY_BONUS - (daysSinceLastPlay / (double)RECENT_ACTIVITY_DAYS) * (MAX_RECENT_ACTIVITY_BONUS - 1.0));
     }
+
+    public double getPlayerScore(String gameName, String playerName) {
+        // 모든 플레이어 데이터를 순회하며 이름이 일치하는 플레이어를 찾습니다.
+        for (UUID uuid : plugin.getDataManager().getAllPlayerUUIDs()) {
+            PlayerData playerData = plugin.getDataManager().getPlayerData(uuid);
+            if (playerData.getPlayerName().equalsIgnoreCase(playerName)) {
+                Minigame minigame = plugin.getMinigameByName(gameName);
+                if (minigame == null) {
+                    return 0; // 게임을 찾을 수 없는 경우
+                }
+
+                MinigameData gameData = playerData.getMinigameData(gameName, minigame.getConfig().getTeamType() != TeamType.SOLO);
+                return calculateScore(gameData, minigame.getConfig().getTeamType());
+            }
+        }
+        return 0; // 플레이어를 찾을 수 없는 경우
+    }
+
 }
