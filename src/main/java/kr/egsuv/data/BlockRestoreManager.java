@@ -8,7 +8,9 @@ import org.bukkit.*;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.BlockState;
+import org.bukkit.block.data.BlockData;
 import org.bukkit.block.data.Directional;
+import org.bukkit.block.data.type.Door;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
@@ -78,26 +80,38 @@ public class BlockRestoreManager implements Listener {
         return region != null && region.contains(location);
     }
 
-    public void logBlockChange(Block block, String gameName, String mapName) {
-        if (block.getType() == Material.AIR) return;
+    public void logBlockChange(Block block, boolean isPlaced, String gameName, String mapName) {
         if (!isInRestoreRegion(gameName, mapName, block.getLocation())) {
             plugin.getLogger().info("블록이 복구 영역 밖에 있습니다: " + formatLocation(block.getLocation()));
             return;
         }
 
         ChunkPosition chunkPos = new ChunkPosition(block.getChunk());
-        BlockChange change = new BlockChange(block);
+        BlockChange change = new BlockChange(block, isPlaced);
 
         worldChanges.computeIfAbsent(mapName, k -> new ConcurrentHashMap<>())
                 .computeIfAbsent(chunkPos, k -> Collections.newSetFromMap(new ConcurrentHashMap<>()))
                 .add(change);
 
-        plugin.getLogger().info("블록 변경 기록: " + gameName + ", " + mapName + ", " + formatLocation(block.getLocation()));
+        plugin.getLogger().info("블록 변경 기록: " + gameName + ", " + mapName + ", " +
+                (isPlaced ? "설치: " : "파괴: ") + block.getType() +
+                " at " + formatLocation(block.getLocation()) +
+                ", Data: " + block.getBlockData().getAsString(true));
+
+        // 문의 상단 부분도 기록
+        if (block.getType().name().endsWith("_DOOR") && block.getBlockData() instanceof Door) {
+            Door doorData = (Door) block.getBlockData();
+            if (doorData.getHalf() == Door.Half.BOTTOM) {
+                Block upperBlock = block.getRelative(BlockFace.UP);
+                logBlockChange(upperBlock, isPlaced, gameName, mapName);
+            }
+        }
 
         if (worldChanges.get(mapName).get(chunkPos).size() > 1000) {
             saveChunkChanges(mapName, chunkPos);
         }
     }
+    // 복구 시작 전 모든 변경사항을 로드
     public void startRestoration(Minigame minigame, String mapName) {
         if (!restoreLock.tryLock()) {
             plugin.getLogger().warning("이미 복구 작업이 진행 중입니다.");
@@ -111,6 +125,9 @@ public class BlockRestoreManager implements Listener {
                 minigame.finalizeGameEnd();
                 return;
             }
+
+            // 모든 변경사항 로드
+            loadAllChunkChanges(mapName);
 
             Map<ChunkPosition, Set<BlockChange>> chunkChanges = worldChanges.getOrDefault(mapName, new ConcurrentHashMap<>());
 
@@ -135,14 +152,13 @@ public class BlockRestoreManager implements Listener {
                     while (blocksRestored < blocksPerTick && System.currentTimeMillis() - startTime < 50) {
                         if (blockIterator == null || !blockIterator.hasNext()) {
                             if (!chunkIterator.hasNext()) {
-                                plugin.getLogger().info("복구 완료: 총 " + totalRestored + "개 블록 복구됨");
                                 finishRestoration(minigame);
                                 this.cancel();
                                 return;
                             }
                             Map.Entry<ChunkPosition, Set<BlockChange>> entry = chunkIterator.next();
                             if (entry != null && entry.getValue() != null) {
-                                blockIterator = entry.getValue().iterator();
+                                blockIterator = new ArrayList<>(entry.getValue()).iterator(); // 복사본 사용
                                 plugin.getLogger().info("새 청크 복구 시작: " + entry.getKey().x + ", " + entry.getKey().z + ", 블록 수: " + entry.getValue().size());
                             } else {
                                 continue;
@@ -153,7 +169,6 @@ public class BlockRestoreManager implements Listener {
                             BlockChange change = blockIterator.next();
                             if (change != null) {
                                 change.restore();
-                                blockIterator.remove();
                                 blocksRestored++;
                                 totalRestored++;
                             }
@@ -169,7 +184,23 @@ public class BlockRestoreManager implements Listener {
     }
 
 
+    // 모든 변경사항을 로드하는 메소드 추가
+    private void loadAllChunkChanges(String mapName) {
+        File worldFolder = new File(plugin.getDataFolder(), "block_changes/" + mapName);
+        if (!worldFolder.exists()) return;
 
+        for (File chunkFile : Objects.requireNonNull(worldFolder.listFiles())) {
+            String fileName = chunkFile.getName();
+            String[] parts = fileName.split("_");
+            if (parts.length != 2) continue;
+
+            int chunkX = Integer.parseInt(parts[0]);
+            int chunkZ = Integer.parseInt(parts[1].replace(".dat", ""));
+            ChunkPosition chunkPos = new ChunkPosition(chunkX, chunkZ);
+
+            loadChunkChanges(mapName, chunkPos);
+        }
+    }
 
     public void handleBlazePodInteract(Player player, Action action) {
         if (action == Action.LEFT_CLICK_BLOCK) {
@@ -235,6 +266,10 @@ public class BlockRestoreManager implements Listener {
             Set<BlockChange> changes = (Set<BlockChange>) ois.readObject();
             worldChanges.computeIfAbsent(worldName, k -> new ConcurrentHashMap<>())
                     .put(chunkPos, changes);
+        } catch (InvalidClassException e) {
+            plugin.getLogger().warning("청크 데이터 버전 불일치. 이 청크의 변경사항을 리셋합니다: " + worldName + " " + chunkPos);
+            worldChanges.computeIfAbsent(worldName, k -> new ConcurrentHashMap<>())
+                    .put(chunkPos, Collections.newSetFromMap(new ConcurrentHashMap<>()));
         } catch (IOException | ClassNotFoundException e) {
             plugin.getLogger().severe("청크 변경사항 로딩 중 오류 발생: " + e.getMessage());
         }
@@ -355,6 +390,7 @@ public class BlockRestoreManager implements Listener {
         plugin.getLogger().info("모든 블록 변경사항 저장 완료: " + mapName);
     }
     private static class ChunkPosition implements Serializable {
+        private static final long serialVersionUID = 1L; // serialVersionUID 추가
         private final int x;
         private final int z;
 
@@ -362,6 +398,13 @@ public class BlockRestoreManager implements Listener {
             this.x = chunk.getX();
             this.z = chunk.getZ();
         }
+
+        // 추가된 생성자
+        public ChunkPosition(int x, int z) {
+            this.x = x;
+            this.z = z;
+        }
+
 
         @Override
         public boolean equals(Object o) {
@@ -378,32 +421,59 @@ public class BlockRestoreManager implements Listener {
     }
 
     private static class BlockChange implements Serializable {
+        private static final long serialVersionUID = 7073358702275900785L; // 버전 업데이트
         private final String worldName;
         private final int x, y, z;
-        private final Material type;
-        private final byte data;
+        private final Material originalType;
+        private final String originalBlockData;
+        private final Material newType;
+        private final String newBlockData;
+        private final boolean isPlaced;
 
-        public BlockChange(Block block) {
+        public BlockChange(Block block, boolean isPlaced) {
             this.worldName = block.getWorld().getName();
             this.x = block.getX();
             this.y = block.getY();
             this.z = block.getZ();
-            this.type = block.getType();
-            this.data = block.getData();
+            this.isPlaced = isPlaced;
+
+            if (isPlaced) {
+                this.originalType = Material.AIR;
+                this.originalBlockData = Material.AIR.createBlockData().getAsString(true);
+                this.newType = block.getType();
+                this.newBlockData = block.getBlockData().getAsString(true);
+            } else {
+                this.originalType = block.getType();
+                this.originalBlockData = block.getBlockData().getAsString(true);
+                this.newType = Material.AIR;
+                this.newBlockData = Material.AIR.createBlockData().getAsString(true);
+            }
         }
 
-        @SuppressWarnings("deprecation")
         public void restore() {
             World world = Bukkit.getWorld(worldName);
             if (world != null) {
                 Block block = world.getBlockAt(x, y, z);
-                block.setType(type);
-                block.setBlockData(Bukkit.createBlockData(type, (data) -> {
-                    if (data instanceof Directional) {
-                        ((Directional) data).setFacing(BlockFace.values()[this.data & 0x7]);
+                try {
+                    BlockData data = Bukkit.createBlockData(originalBlockData);
+                    block.setType(originalType, false);
+                    block.setBlockData(data, false);
+
+                    // 문의 상단 부분 처리
+                    if (originalType.name().endsWith("_DOOR")) {
+                        Block upperBlock = world.getBlockAt(x, y + 1, z);
+                        BlockData upperData = Bukkit.createBlockData(originalBlockData);
+                        if (upperData instanceof Door) {
+                            ((Door) upperData).setHalf(Door.Half.TOP);
+                            upperBlock.setBlockData(upperData, false);
+                        }
                     }
-                }));
-                plugin.getLogger().info("블록 복구: " + type + " at X:" + x + ", Y:" + y + ", Z:" + z);
+
+                    plugin.getLogger().info("블록 복구: " + originalType + " at X:" + x + ", Y:" + y + ", Z:" + z + ", Data: " + originalBlockData);
+                } catch (IllegalArgumentException e) {
+                    plugin.getLogger().warning("블록 데이터 복원 실패: " + e.getMessage() + ". 기본 상태로 복원합니다.");
+                    block.setType(originalType, false);
+                }
             } else {
                 plugin.getLogger().warning("월드를 찾을 수 없음: " + worldName);
             }
