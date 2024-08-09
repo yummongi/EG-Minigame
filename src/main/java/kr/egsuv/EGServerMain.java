@@ -91,7 +91,7 @@ public final class EGServerMain extends JavaPlugin implements Listener {
 
     private void initializeMinigames() {
         firstHitGame = new FirstHitGame(this, minigameItems, "fth", 2, 8, "§a선빵 게임§r", true);
-        teamDeathmatchGame = new TeamDeathmatchGame(this, minigameItems, "tdm", 4, 12, "§c팀 데스매치§r", true, TeamType.DUO, 2, false, false);
+        teamDeathmatchGame = new TeamDeathmatchGame(this, minigameItems, "tdm", 2, 12, "§c팀 데스매치§r", true, TeamType.DUO, 2, false, false);
         spleefGame = new SpleefGame(this, minigameItems, "spf", 2, 10, "§b스플리프", true);
 
         minigameList.add(firstHitGame);

@@ -158,15 +158,15 @@ public class TeamDeathmatchGame extends Minigame implements Listener {
 
         if (killer != null && getPlayers().contains(killer) && !getPlayerTeam(killer).equals(getPlayerTeam(victim))) {
             String killerTeam = getPlayerTeam(killer);
-            int newScore = objective.getScore(killerTeam.toUpperCase()).getScore() + 1;
-            updateScore(killerTeam, newScore);
-
-            broadcastToPlayers(Component.text(ChatColor.YELLOW + killer.getName() + ChatColor.WHITE + "님이 " +
-                    ChatColor.YELLOW + victim.getName() + ChatColor.WHITE + "님을 처치했습니다!"));
-
-            if (newScore >= WIN_SCORE) {
-                endGame(false);
-                return;
+            if (objective != null) {
+                int newScore = objective.getScore(killerTeam.toUpperCase()).getScore() + 1;
+                updateScore(killerTeam, newScore);
+                broadcastToPlayers(Component.text(ChatColor.YELLOW + killer.getName() + ChatColor.WHITE + "님이 " +
+                        ChatColor.YELLOW + victim.getName() + ChatColor.WHITE + "님을 처치했습니다!"));
+                if (newScore >= WIN_SCORE) {
+                    endGame(false);
+                    return;
+                }
             }
         }
 

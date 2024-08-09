@@ -733,6 +733,9 @@ public abstract class Minigame {
     // 맵이 선택 된 후에 해당 메소드 호출
     public void startGameAfterMapSelection() {
         if (useBlockRestore) {
+            // 센터 계산 후 설정
+            loadArenaCenterFromConfig();
+
             if (!blockRestoreManager.isRestoreRegionSet(COMMAND_MAIN_NAME, currentMap)) {
                 cancelGame("선택된 맵 '" + currentMap + "'의 복구 영역이 설정되지 않았습니다. 관리자에게 문의하세요.");
                 return;
@@ -757,8 +760,6 @@ public abstract class Minigame {
         }
         setupTeamsAndScoreboard();
 
-        // 센터 계산 후 설정
-        loadArenaCenterFromConfig();
 
         // 플레이어 초기화 및 텔레포트
         for (Player player : players) {
@@ -1204,6 +1205,9 @@ public abstract class Minigame {
             player.getInventory().clear();
             player.setInvulnerable(false);
             plugin.teleportToSpawn(player);
+
+            player.playerListName(Component.text(player.getName()).color(NamedTextColor.WHITE));
+            player.displayName(Component.text(player.getName()).color(NamedTextColor.WHITE));
 
             if (!disconnectedPlayers.contains(player.getUniqueId())) {
                 MinigamePenaltyManager.clearPlayerData(player.getUniqueId());
@@ -1849,6 +1853,7 @@ public abstract class Minigame {
     protected abstract void resetGameSpecificData();
 
     protected abstract void onGameStart();
+
     protected abstract void onGameEnd();
     // Minigame클래스의 gameRestoration() -> startNextRound() -> resumeGame() 실행
     protected abstract void resumeGame();

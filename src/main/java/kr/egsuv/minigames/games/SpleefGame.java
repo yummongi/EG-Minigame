@@ -294,14 +294,6 @@ public class SpleefGame extends Minigame implements Listener {
         broadcastToPlayers(Component.text("§a파워업이 생성되었습니다!"));
     }
 
-    private Location getRandomPowerupLocation() {
-        List<Location> possibleLocations = new ArrayList<>(brokenBlocks);
-        if (possibleLocations.isEmpty()) {
-            return null;
-        }
-        return possibleLocations.get(new Random().nextInt(possibleLocations.size()));
-    }
-
     private ItemStack createPowerupItem() {
         ItemStack powerup = new ItemStack(Material.NETHER_STAR);
         ItemMeta meta = powerup.getItemMeta();
@@ -315,8 +307,6 @@ public class SpleefGame extends Minigame implements Listener {
         int fireballInterval = Math.max(1, INITIAL_FIREBALL_INTERVAL - (currentRound - 1));
         fireballTask = runTaskTimer(this::spawnFireball, 0L, fireballInterval * 20L);
     }
-
-
 
     private void spawnFireball() {
         if (alivePlayers.size() <= 1 || getState() != MinigameState.IN_PROGRESS) {

@@ -2,7 +2,7 @@ package kr.egsuv.minigames;
 
 public enum TeamType {
     SOLO(1),
-    DUO(2),
+    DUO(1),
     TRIPLE(3),
     SQUAD(4);
 
