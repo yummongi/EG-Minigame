@@ -11,6 +11,7 @@ import org.bukkit.Location;
 import org.bukkit.WeatherType;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.PlayerInventory;
+import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 
 
@@ -35,6 +36,11 @@ public class SpawnCommand implements Command {
     }
 
     private void initPlayerState(Player player) {
+        // 활성화된 모든 포션 효과를 가져옵니다.
+        for (PotionEffect effect : player.getActivePotionEffects()) {
+            // 각 포션 효과를 제거합니다.
+            player.removePotionEffect(effect.getType());
+        }
         if (player.isOp()) {
             player.setGameMode(GameMode.CREATIVE);
             player.setAllowFlight(true);
@@ -53,6 +59,10 @@ public class SpawnCommand implements Command {
         player.setGravity(true);
         player.setPlayerWeather(WeatherType.CLEAR);
         PotionUtils.applyPotionEffect(player, PotionEffectType.REGENERATION, 72000, 1);
+
+
+
+
 
         // 무적 모드 해제
         player.setInvulnerable(false);

@@ -24,13 +24,15 @@ public class PlayerDamageListener implements Listener {
 
             // 미니게임 내에서의 데미지 처리
             Minigame minigame = plugin.getCurrentGame(victim);
-            if (minigame != null && minigame.getPlayers().contains(attacker)) {
+            if (minigame != null & minigame.getPlayers().contains(victim)) {
                 // 스플리프 게임의 경우 플레이어 간 데미지 취소
                 if (minigame instanceof SpleefGame) {
                     event.setCancelled(true);
                     return;
                 }
+            }
 
+            if (minigame != null && minigame.getPlayers().contains(attacker)) {
                 if (event.getDamage() > 0) {
                     minigame.handleDamage(attacker, victim, event.getFinalDamage());
                 }

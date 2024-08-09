@@ -61,7 +61,6 @@ public final class EGServerMain extends JavaPlugin implements Listener {
             playerList.put(onlinePlayer.getUniqueId(), "로비");
         }
         instance = this;
-        blockRestoreManager = new BlockRestoreManager();
         commandManager = new CommandManager();
         miniGamesGui = new MinigameGui();
         configManager = new ConfigManager();
@@ -71,43 +70,43 @@ public final class EGServerMain extends JavaPlugin implements Listener {
         minigamePenaltyManager = new MinigamePenaltyManager();
         spawnCommand = new SpawnCommand(miniGamesGui);
 
+        blockRestoreManager = new BlockRestoreManager();
+        // BlockRestoreManager 초기화 후 즉시 데이터 로드
+        Bukkit.getScheduler().runTaskLater(this, () -> {
+            blockRestoreManager.loadRestoreData();
+            getLogger().info("BlockRestoreManager 초기화 상태:");
+            getLogger().info("gameMapRegions: " + blockRestoreManager.getGameMapRegions());
+            getLogger().info("gameMapCenters: " + blockRestoreManager.getGameMapCenters());
+        }, 40L); // 1초 후에 실행 (서버가 완전히 로드된 후)
+
         MinigamePenaltyManager.startCleanupTask(this);
 
-        // 미니게임 추가
-        firstHitGame = new FirstHitGame(this, minigameItems, "fth", 2, 8,
-                "§a선빵 게임§r", true);
-        minigameList.add(firstHitGame);
+        initializeMinigames();
 
-        // TeamDeathmatchGame 추가
-        teamDeathmatchGame = new TeamDeathmatchGame(this, minigameItems, "tdm", 4, 12,
-                "§c팀 데스매치§r", true, TeamType.DUO, 2, false, false);
-        minigameList.add(teamDeathmatchGame);
-
-        //SpleefGame 추가
-        spleefGame = new SpleefGame(this, minigameItems, "spf", 2, 10, "§b스플리프", true);
-        minigameList.add(spleefGame);
-
-        //리스너 등록
         registerListeners();
-        //커맨드 등록
         registerCommands();
 
-        for (Minigame minigame : minigameList) {
-            if (minigame.useBlockRestore) {
-                minigame.getBlockRestoreManager().loadRestoreData();
-            }
-        }
-
-
         getLogger().info(ANSI_GREEN + ANSI_BOLD + "EG 서버 플러그인 활성화" + ANSI_RESET);
+    }
 
+    private void initializeMinigames() {
+        firstHitGame = new FirstHitGame(this, minigameItems, "fth", 2, 8, "§a선빵 게임§r", true);
+        teamDeathmatchGame = new TeamDeathmatchGame(this, minigameItems, "tdm", 4, 12, "§c팀 데스매치§r", true, TeamType.DUO, 2, false, false);
+        spleefGame = new SpleefGame(this, minigameItems, "spf", 2, 10, "§b스플리프", true);
+
+        minigameList.add(firstHitGame);
+        minigameList.add(teamDeathmatchGame);
+        minigameList.add(spleefGame);
+
+        for (Minigame minigame : minigameList) {
+            minigame.setBlockRestoreManager(blockRestoreManager);
+        }
     }
 
     @Override
     public void onDisable() {
-
-
-        getLogger().info("서버 종료 중...");
+        getServer().getScheduler().cancelTasks(this);
+        getLogger().info("모든 스케줄러 작업 취소 및 서버 종료 중...");
 
         for (Player onlinePlayer : getServer().getOnlinePlayers()) {
             teleportToSpawn(onlinePlayer);
@@ -117,58 +116,21 @@ public final class EGServerMain extends JavaPlugin implements Listener {
             onlinePlayer.closeInventory(InventoryCloseEvent.Reason.PLUGIN);
         }
 
-
         for (Minigame minigame : minigameList) {
-            minigame.getPlayers().clear();
-            if (minigame.getTimerBossBar() != null) {
-                minigame.getTimerBossBar().removeAll();
-                minigame.setTimerBossBar(null);
-            }
-            if (minigame.getLobbyBossBar() != null) {
-                minigame.getLobbyBossBar().removeAll();
-                minigame.setLobbyBossBar(null);
-            }
-
             try {
-                if (minigame.getState() == MinigameState.IN_PROGRESS || minigame.getState() == MinigameState.ENDING) {
-                    minigame.forceEnd();
-                }
-                if (minigame.useBlockRestore) {
-                    minigame.getBlockRestoreManager().forceRestoreAllMaps();
-                }
+                minigame.forceEnd();
             } catch (Exception e) {
                 getLogger().severe("게임 '" + minigame.getDisplayGameName() + "' 종료 중 오류 발생: " + e.getMessage());
                 e.printStackTrace();
             }
         }
 
-        // 모든 복구 작업이 완료될 때까지 대기
-        boolean allRestored = false;
-        long startWaitTime = System.currentTimeMillis();
-        while (!allRestored && System.currentTimeMillis() - startWaitTime < 30000) { // 최대 30초 대기
-            allRestored = true;
-            for (Minigame game : getMinigameList()) {
-                if (game.useBlockRestore && game.getBlockRestoreManager().isRestoring()) {
-                    allRestored = false;
-                    break;
-                }
-            }
-            try {
-                Thread.sleep(100); // 100ms 대기
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            }
-        }
-
-        if (!allRestored) {
-            getLogger().warning("일부 맵 복구가 완료되지 않았습니다. 서버를 강제로 종료합니다.");
-        } else {
-            getLogger().info("모든 맵 복구가 완료되었습니다.");
+        if (blockRestoreManager != null) {
+            blockRestoreManager.forceRestoreAllMaps();
+            blockRestoreManager.saveRestoreData();
         }
 
         getLogger().info("서버가 안전하게 종료되었습니다.");
-
         minigameList.clear();
         getLogger().info(ANSI_GREEN + ANSI_BOLD + "EG 서버 플러그인 비활성화" + ANSI_RESET);
     }
@@ -317,6 +279,12 @@ public final class EGServerMain extends JavaPlugin implements Listener {
 
     public BlockRestoreManager getBlockRestoreManager() {
         return blockRestoreManager;
+    }
+
+    public void reloadBlockRestoreData() {
+        if (blockRestoreManager != null) {
+            blockRestoreManager.reloadData();
+        }
     }
 
 }

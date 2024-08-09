@@ -6,21 +6,20 @@ import kr.egsuv.minigames.MinigameItems;
 import kr.egsuv.minigames.MinigameState;
 import kr.egsuv.minigames.TeamType;
 import net.kyori.adventure.text.Component;
+import net.md_5.bungee.api.ChatMessageType;
+import net.md_5.bungee.api.chat.TextComponent;
+import org.apache.commons.lang3.StringUtils;
 import org.bukkit.*;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.block.Block;
 import org.bukkit.enchantments.Enchantment;
-import org.bukkit.entity.EntityType;
-import org.bukkit.entity.Fireball;
-import org.bukkit.entity.Player;
+import org.bukkit.entity.*;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
-import org.bukkit.event.entity.EntityDamageEvent;
-import org.bukkit.event.entity.EntityExplodeEvent;
-import org.bukkit.event.entity.EntityPickupItemEvent;
+import org.bukkit.event.entity.*;
 import org.bukkit.event.player.AsyncPlayerChatEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
@@ -38,9 +37,11 @@ public class SpleefGame extends Minigame implements Listener {
 
     private static final int ROUNDS_TO_WIN = 3;
     private final Material SPLEEF_TOOL = Material.DIAMOND_SHOVEL;
-    private static final int POWERUP_SPAWN_INTERVAL = 20; // 20초마다 파워업 생성
-    private static final int SUDDEN_DEATH_TIME = 50; // 50초 후 서든 데스 시작
-    private static final int FIREBALL_INTERVAL = 5; // 5초마다 화염구 생성
+    private static final int POWERUP_SPAWN_INTERVAL = 30; // 20초마다 파워업 생성
+    private static final int INITIAL_SUDDEN_DEATH_TIME = 50; // 초기 서든 데스 시작 시간 (50초)
+    private static final int INITIAL_FIREBALL_INTERVAL = 5; // 초기 화염구 생성 간격 (5초)
+    private static final double SNOW_DROP_CHANCE = 0.05; // 5% 확률로 눈덩이 획득
+    private static final int FLASH_JUMP_COOLDOWN = 8; // 플래시 점프 쿨타임 (초)
 
     private List<Player> alivePlayers;
     private Map<Player, Integer> roundWins;
@@ -55,11 +56,13 @@ public class SpleefGame extends Minigame implements Listener {
     private int lowestY;
     private Location arenaMin;
     private Location arenaMax;
+    private Map<Player, Long> lastFlashJumpTime = new HashMap<>();
 
     public SpleefGame(EGServerMain plugin, MinigameItems item, String commandMainName, int MIN_PLAYER, int MAX_PLAYER, String displayGameName, boolean useBlockRestore) {
         super(plugin, item, commandMainName, MIN_PLAYER, MAX_PLAYER, displayGameName, useBlockRestore);
         setGameRules(true, false, false, true, false);
         setGameTimeLimit(300); // 5분 라운드 제한시간
+        plugin.getServer().getPluginManager().registerEvents(this, plugin);
     }
 
     @Override
@@ -69,6 +72,8 @@ public class SpleefGame extends Minigame implements Listener {
         for (Player player : getPlayers()) {
             roundWins.put(player, 0);
             scores.put(player, 0);
+            // 플레쉬 점프 기록
+            lastFlashJumpTime.put(player, 0L);
         }
         setArenaProperties();
         startNextRound();
@@ -168,7 +173,8 @@ public class SpleefGame extends Minigame implements Listener {
 
         powerupTask = runTaskTimer(this::spawnPowerup, POWERUP_SPAWN_INTERVAL * 20L, POWERUP_SPAWN_INTERVAL * 20L);
 
-        suddenDeathTask = runTaskLater(this::startSuddenDeath, SUDDEN_DEATH_TIME * 20L);
+        int suddenDeathTime = Math.max(10, INITIAL_SUDDEN_DEATH_TIME - (currentRound - 1) * 5);
+        suddenDeathTask = runTaskLater(this::startSuddenDeath, suddenDeathTime * 20L);
 
         // 게임 종료 30초 전 이벤트 예약
         runTaskLater(this::scheduleSuddenBlockRemoval, (getGameTimeLimit() - 30) * 20L);
@@ -209,7 +215,6 @@ public class SpleefGame extends Minigame implements Listener {
             if (wins >= ROUNDS_TO_WIN) {
                 updateScoreboard(); // 마지막 라운드 스코어 업데이트
                 endGame(false);
-                cancelGameTasks();
                 return;
             }
         } else {
@@ -218,6 +223,7 @@ public class SpleefGame extends Minigame implements Listener {
 
         updateScoreboard();
         checkGameEnd();
+        alivePlayers = new ArrayList<>(getPlayers());
 
         if (useBlockRestore) {
             gameRestoration();
@@ -229,19 +235,32 @@ public class SpleefGame extends Minigame implements Listener {
     @Override
     public void handlePlayerQuit(Player player) {
         super.handlePlayerQuit(player);
-        alivePlayers.remove(player);
-        roundWins.remove(player);
+        if (alivePlayers != null) {
+            alivePlayers.remove(player);
+        }
+        if (lastFlashJumpTime != null) {
+            lastFlashJumpTime.remove(player);
+        }
+        if (roundWins != null) {
+            roundWins.remove(player);
+        }
         if (alivePlayers.size() <= 1) {
             endRound();
         }
     }
 
+
     private void checkGameEnd() {
+        boolean gameEnded = false;
         for (Map.Entry<Player, Integer> entry : roundWins.entrySet()) {
             if (entry.getValue() >= ROUNDS_TO_WIN) {
-                endGame(false);
-                return;
+                gameEnded = true;
+                break;
             }
+        }
+
+        if (gameEnded || currentRound >= ROUNDS_TO_WIN * 2 - 1) {
+            endGame(false);
         }
     }
 
@@ -258,17 +277,22 @@ public class SpleefGame extends Minigame implements Listener {
             suddenDeathTask.cancel();
             suddenDeathTask = null;
         }
+        if (fireballTask != null) {
+            fireballTask.cancel();
+            fireballTask = null;
+        }
     }
+
 
     private void spawnPowerup() {
         if (brokenBlocks.isEmpty()) {
             return;
         }
         Location spawnLoc = new ArrayList<>(brokenBlocks).get(new Random().nextInt(brokenBlocks.size()));
-        spawnLoc.getWorld().dropItem(spawnLoc.clone().add(0.5, 0.5, 0.5), createPowerupItem());
+        Item powerupItem = spawnLoc.getWorld().dropItem(spawnLoc.clone().add(0.5, 0.5, 0.5), createPowerupItem());
+        powerupItem.setGlowing(true);
         broadcastToPlayers(Component.text("§a파워업이 생성되었습니다!"));
     }
-
 
     private Location getRandomPowerupLocation() {
         List<Location> possibleLocations = new ArrayList<>(brokenBlocks);
@@ -288,24 +312,30 @@ public class SpleefGame extends Minigame implements Listener {
 
     private void startSuddenDeath() {
         broadcastTitle("§c서든 데스", "§e화염구가 내려옵니다!", 10, 70, 20);
-        fireballTask = runTaskTimer(this::spawnFireball, 0L, FIREBALL_INTERVAL * 20L);
+        int fireballInterval = Math.max(1, INITIAL_FIREBALL_INTERVAL - (currentRound - 1));
+        fireballTask = runTaskTimer(this::spawnFireball, 0L, fireballInterval * 20L);
     }
+
+
 
     private void spawnFireball() {
         if (alivePlayers.size() <= 1 || getState() != MinigameState.IN_PROGRESS) {
             return;
         }
 
-        Location spawnLoc = new Location(arenaCenter.getWorld(),
-                arenaMin.getX() + Math.random() * (arenaMax.getX() - arenaMin.getX()),
-                arenaMax.getY() + 5,
-                arenaMin.getZ() + Math.random() * (arenaMax.getZ() - arenaMin.getZ())
-        );
+        int fireballCount = Math.min(5, currentRound);
+        for (int i = 0; i < fireballCount; i++) {
+            Location spawnLoc = new Location(arenaCenter.getWorld(),
+                    arenaMin.getX() + Math.random() * (arenaMax.getX() - arenaMin.getX()),
+                    arenaMax.getY() + 5,
+                    arenaMin.getZ() + Math.random() * (arenaMax.getZ() - arenaMin.getZ())
+            );
 
-        Fireball fireball = (Fireball) spawnLoc.getWorld().spawnEntity(spawnLoc, EntityType.FIREBALL);
-        fireball.setDirection(new Vector(0, -1, 0).normalize());
-        fireball.setYield(2F);
-        fireball.setIsIncendiary(false);
+            Fireball fireball = (Fireball) spawnLoc.getWorld().spawnEntity(spawnLoc, EntityType.FIREBALL);
+            fireball.setDirection(new Vector(0, -1, 0).normalize());
+            fireball.setYield(2F);
+            fireball.setIsIncendiary(false);
+        }
     }
 
     private void removeRandomFloorBlock() {
@@ -342,9 +372,13 @@ public class SpleefGame extends Minigame implements Listener {
         ItemMeta meta = spleefTool.getItemMeta();
         meta.setDisplayName("§b§l스플리프 삽");
         meta.setUnbreakable(true);
+        List<String> lore = new ArrayList<>();
+        lore.add("§e우클릭: 플래시 점프");
+        meta.setLore(lore);
         spleefTool.setItemMeta(meta);
         player.getInventory().setItem(0, spleefTool);
     }
+
 
     @Override
     protected void updateScoreboard() {
@@ -410,7 +444,9 @@ public class SpleefGame extends Minigame implements Listener {
         player.sendMessage("§e3. 총 " + ROUNDS_TO_WIN + "라운드를 먼저 이기는 플레이어가 최종 승자입니다.");
         player.sendMessage("§e4. 각 라운드는 " + (getGameTimeLimit() / 60) + "분간 진행됩니다.");
         player.sendMessage("§e5. 30초마다 파워업이 생성됩니다. 파워업을 주워 특별한 능력을 얻으세요!");
-        player.sendMessage("§e6. 1분 후 서든 데스가 시작되며, 바닥이 서서히 사라집니다.");
+        player.sendMessage("§e6. 1분 후 서든 데스가 시작되며, 화염구가 떨어집니다.");
+        player.sendMessage("§e7. 삽을 우클릭하면 플래시 점프를 사용할 수 있습니다. (쿨타임: " + FLASH_JUMP_COOLDOWN + "초)");
+        player.sendMessage("§e8. 눈 블록을 부술 때 일정 확률로 눈덩이를 얻을 수 있습니다.");
     }
 
     @Override
@@ -418,7 +454,9 @@ public class SpleefGame extends Minigame implements Listener {
         currentRound = 0;
         roundWins.clear();
         brokenBlocks.clear();
+        lastFlashJumpTime.clear();
         cancelGameTasks();
+        alivePlayers.clear();
     }
 
     @Override
@@ -448,10 +486,15 @@ public class SpleefGame extends Minigame implements Listener {
     }
 
 
-    @EventHandler
+    @EventHandler(priority = EventPriority.HIGHEST)
     public void onBlockBreak(BlockBreakEvent event) {
         Player player = event.getPlayer();
         if (!getPlayers().contains(player) || getState() != MinigameState.IN_PROGRESS) {
+            return;
+        }
+
+        if (isPlayerInGameLobby(player)) {
+            event.setCancelled(true);
             return;
         }
 
@@ -461,16 +504,22 @@ public class SpleefGame extends Minigame implements Listener {
             return;
         }
 
+
         if (player.getInventory().getItemInMainHand().getType() != SPLEEF_TOOL) {
             event.setCancelled(true);
             player.sendMessage("§c스플리프 삽으로만 눈 블록을 부술 수 있습니다!");
             return;
         }
 
-
+        event.setDropItems(false);
         brokenBlocks.add(block.getLocation());
         block.getWorld().spawnParticle(Particle.ITEM_SNOWBALL, block.getLocation().add(0.5, 0.5, 0.5), 10);
         block.getWorld().playSound(block.getLocation(), Sound.BLOCK_SNOW_BREAK, 1.0f, 1.0f);
+
+        if (Math.random() < SNOW_DROP_CHANCE) {
+            player.getInventory().addItem(new ItemStack(Material.SNOWBALL));
+            player.sendMessage("§a눈덩이를 획득했습니다!");
+        }
 
         if (Math.random() < 0.1) {
             spawnPowerup();
@@ -482,8 +531,7 @@ public class SpleefGame extends Minigame implements Listener {
                 location.getY() >= arenaMin.getY() && location.getY() <= arenaMax.getY() &&
                 location.getZ() >= arenaMin.getZ() && location.getZ() <= arenaMax.getZ();
     }
-
-    @EventHandler
+    @EventHandler(priority = EventPriority.HIGHEST)
     public void onEntityExplode(EntityExplodeEvent event) {
         if (event.getEntity() instanceof Fireball && getState() == MinigameState.IN_PROGRESS) {
             List<Block> blocksToRemove = new ArrayList<>();
@@ -491,6 +539,7 @@ public class SpleefGame extends Minigame implements Listener {
                 if (isWithinArena(block.getLocation())) {
                     if (block.getType() == Material.SNOW_BLOCK) {
                         brokenBlocks.add(block.getLocation());
+                        block.setType(Material.AIR);
                     } else {
                         blocksToRemove.add(block);
                     }
@@ -499,15 +548,25 @@ public class SpleefGame extends Minigame implements Listener {
                 }
             }
             event.blockList().removeAll(blocksToRemove);
+            event.setYield(0); // 폭발 효과 제거
         }
     }
 
-    @EventHandler
+
+    @EventHandler(priority = EventPriority.HIGHEST)
     public void onPlayerMove(PlayerMoveEvent event) {
         Player player = event.getPlayer();
         if (!getPlayers().contains(player) || getState() != MinigameState.IN_PROGRESS) {
             return;
         }
+
+        if (isPlayerInGameLobby(player)) {
+            event.setCancelled(true);
+            return;
+        }
+
+
+        if (alivePlayers == null) return;
 
         if (player.getLocation().getY() < (lowestY - 5) && alivePlayers.contains(player)) {
             eliminatePlayer(player);
@@ -517,7 +576,7 @@ public class SpleefGame extends Minigame implements Listener {
     }
 
 
-    @EventHandler(priority = EventPriority.HIGH)
+    @EventHandler(priority = EventPriority.HIGHEST)
     public void onPlayerDamage(EntityDamageEvent event) {
         if (!(event.getEntity() instanceof Player)) {
             return;
@@ -528,32 +587,115 @@ public class SpleefGame extends Minigame implements Listener {
             return;
         }
 
-        if (event.getCause() == EntityDamageEvent.DamageCause.FALL) {
-            event.setCancelled(true);
-        }
+        event.setCancelled(true);
     }
 
 
-    @EventHandler
+
+    @EventHandler(priority = EventPriority.HIGHEST)
     public void onPlayerInteract(PlayerInteractEvent event) {
         Player player = event.getPlayer();
         if (!getPlayers().contains(player) || getState() != MinigameState.IN_PROGRESS) {
             return;
         }
 
-        if ((event.getAction() == Action.LEFT_CLICK_AIR || event.getAction() == Action.LEFT_CLICK_BLOCK) &&
-                player.getInventory().getItemInMainHand().getType() == SPLEEF_TOOL) {
-            player.playSound(player.getLocation(), Sound.ENTITY_PLAYER_ATTACK_SWEEP, 0.5f, 1.0f);
+        ItemStack item = event.getItem();
+        if (item == null) return;
+
+        if (event.getAction() == Action.RIGHT_CLICK_AIR || event.getAction() == Action.RIGHT_CLICK_BLOCK) {
+            if (item.getType() == SPLEEF_TOOL) {
+                handleFlashJump(player);
+            }
         }
     }
 
+    private void handleFlashJump(Player player) {
+        long currentTime = System.currentTimeMillis();
+        long lastUseTime = lastFlashJumpTime.getOrDefault(player, 0L);
+
+        if (currentTime - lastUseTime < FLASH_JUMP_COOLDOWN * 1000) {
+            long remainingCooldown = FLASH_JUMP_COOLDOWN - (currentTime - lastUseTime) / 1000;
+            player.sendMessage("§c플래시 점프 쿨타임: " + remainingCooldown + "초");
+            return;
+        }
+
+        Vector direction = player.getLocation().getDirection().multiply(2.0);
+        player.setVelocity(direction);
+        player.playSound(player.getLocation(), Sound.ENTITY_ENDER_DRAGON_FLAP, 1.0f, 1.5f);
+        player.spawnParticle(Particle.END_ROD, player.getLocation(), 30, 0.5, 0.5, 0.5, 0.1);
+
+        lastFlashJumpTime.put(player, currentTime);
+
+        // 쿨타임 UI 표시
+        new BukkitRunnable() {
+            int secondsLeft = FLASH_JUMP_COOLDOWN;
+
+            @Override
+            public void run() {
+                if (secondsLeft > 0) {
+                    double progress = (double) secondsLeft / FLASH_JUMP_COOLDOWN;
+                    String barColor = progress > 0.5 ? "§c" : (progress > 0.25 ? "§e" : "§a");
+                    String progressBar = StringUtils.repeat("█", (int) (progress * 10)) +
+                            StringUtils.repeat("░", 10 - (int) (progress * 10));
+                    player.spigot().sendMessage(ChatMessageType.ACTION_BAR,
+                            TextComponent.fromLegacyText(barColor + "플래시 점프 쿨타임: " + progressBar + " " + secondsLeft + "초"));
+                    secondsLeft--;
+                } else {
+                    player.spigot().sendMessage(ChatMessageType.ACTION_BAR,
+                            TextComponent.fromLegacyText("§a플래시 점프 사용 가능!"));
+                    player.sendTitle("", "§a플래시 점프 사용 가능!", 10, 40, 10);
+                    this.cancel();
+                }
+            }
+        }.runTaskTimer(plugin, 0L, 20L);
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onSnowballThrow(ProjectileLaunchEvent event) {
+        if (!(event.getEntity() instanceof Snowball)) return;
+        if (!(event.getEntity().getShooter() instanceof Player)) return;
+
+
+        Player shooter = (Player) event.getEntity().getShooter();
+        if (!getPlayers().contains(shooter) || getState() != MinigameState.IN_PROGRESS) {
+            return;
+        }
+
+        Snowball snowball = (Snowball) event.getEntity();
+        snowball.setVelocity(snowball.getVelocity().multiply(1.5)); // 눈덩이 속도 증가
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onSnowballHit(ProjectileHitEvent event) {
+        if (!(event.getEntity() instanceof Snowball)) return;
+        if (!(event.getEntity().getShooter() instanceof Player)) return;
+
+        Player shooter = (Player) event.getEntity().getShooter();
+        if (!getPlayers().contains(shooter) || getState() != MinigameState.IN_PROGRESS) {
+            return;
+        }
+
+        if (event.getHitBlock() != null && event.getHitBlock().getType() == Material.SNOW_BLOCK) {
+            event.getHitBlock().setType(Material.AIR);
+            brokenBlocks.add(event.getHitBlock().getLocation());
+            event.getHitBlock().getWorld().spawnParticle(Particle.ITEM_SNOWBALL, event.getHitBlock().getLocation().add(0.5, 0.5, 0.5), 20);
+            event.getHitBlock().getWorld().playSound(event.getHitBlock().getLocation(), Sound.BLOCK_SNOW_BREAK, 1.0f, 1.0f);
+        }
+    }
+
+
     // 파워업 아이템 획득 처리
-    @EventHandler
+    @EventHandler(priority = EventPriority.HIGHEST)
     public void onItemPickup(EntityPickupItemEvent event) {
         if (!(event.getEntity() instanceof Player)) return;
         Player player = (Player) event.getEntity();
 
         if (!getPlayers().contains(player) || getState() != MinigameState.IN_PROGRESS) {
+            return;
+        }
+
+        if (isPlayerInGameLobby(player)) {
+            event.setCancelled(true);
             return;
         }
 
@@ -597,7 +739,7 @@ public class SpleefGame extends Minigame implements Listener {
     }
 
     // 플레이어 채팅 이벤트 처리 (팀 채팅 구현)
-    @EventHandler
+    @EventHandler(priority = EventPriority.HIGHEST)
     public void onPlayerChat(AsyncPlayerChatEvent event) {
         Player player = event.getPlayer();
         if (!getPlayers().contains(player) || getState() != MinigameState.IN_PROGRESS) {

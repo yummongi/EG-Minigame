@@ -482,7 +482,9 @@ public abstract class Minigame {
 
         if (state == MinigameState.DISABLED) {
             player.sendMessage(Prefix.SERVER + DISPLAY_GAME_NAME + "§r 게임이 현재 §c점검중§f입니다.");
+            return;
         }
+
         if (state != MinigameState.WAITING && state != MinigameState.STARTING) {
             player.sendMessage(Prefix.SERVER + DISPLAY_GAME_NAME + "§r 게임이 이미 진행 중입니다.");
             return;
@@ -883,7 +885,7 @@ public abstract class Minigame {
         }
 
 
-        if (useBlockRestore && currentMap != null) {
+        if (useBlockRestore) { // && currentMap != null) {
             blockRestoreManager.saveAllChanges(currentMap);
         }
 
@@ -894,8 +896,10 @@ public abstract class Minigame {
             teamChatEnabled.remove(player);
         }
 
-        showFinalRanking();
-        recordGameResult();
+        if (plugin.isEnabled()) {
+            showFinalRanking();
+            recordGameResult();
+        }
 
         if (timerBossBar != null) {
             timerBossBar.removeAll();
@@ -908,21 +912,26 @@ public abstract class Minigame {
         }
 
         // 15초 후에 플레이어들을 스폰으로 보내고 게임을 리셋
-        Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            // 모든 플레이어의 스코어보드를 기본 스코어보드로 재설정하고 무적 상태 해제
-            for (Player player : new ArrayList<>(players)) {
-                gameQuitPlayer(player);
-            }
+        if (plugin.isEnabled()) {
+            Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                // 작업이 실행되기 전에 플러그인이 비활성화되었는지 다시 확인
+                if (!plugin.isEnabled()) return;
 
-            if (useBlockRestore && currentMap != null) {
-                state = MinigameState.REPAIRING;
-                blockRestoreManager.startRestoration(this, currentMap);
-                finalizeGameEnd();
-            } else {
-                finalizeGameEnd();
-            }
+                // 모든 플레이어의 스코어보드를 기본 스코어보드로 재설정하고 무적 상태 해제
+                for (Player player : new ArrayList<>(players)) {
+                    gameQuitPlayer(player);
+                }
 
-        }, 300L); // 15초 (20틱 * 15 = 300틱)
+                if (useBlockRestore) { //&& currentMap != null) {
+                    state = MinigameState.REPAIRING;
+                    blockRestoreManager.startRestoration(this, currentMap);
+                    finalizeGameEnd();
+                } else {
+                    finalizeGameEnd();
+                }
+
+            }, 300L); // 15초 (20틱 * 15 = 300틱)
+        }
     }
 
     public void finalizeGameEnd() {
@@ -932,7 +941,7 @@ public abstract class Minigame {
     }
 
     protected void gameRestoration() {
-        if (!useBlockRestore || currentMap == null) {
+        if (!useBlockRestore) { // || currentMap == null) {
             startNextRound();
             return;
         }
@@ -1006,9 +1015,9 @@ public abstract class Minigame {
             for (Player player : new ArrayList<>(players)) {
                 gameQuitPlayer(player);
             }
-            if (useBlockRestore) {
+/*            if (useBlockRestore) {
                 blockRestoreManager.forceRestoreAllMaps();
-            }
+            }*/
             resetGame();
             state = MinigameState.WAITING;
         }
@@ -1062,18 +1071,20 @@ public abstract class Minigame {
         return arenaCenter;
     }
 
-    // config에서 arenaCenter 로드
     private void loadArenaCenterFromConfig() {
         if (currentMap != null) {
+            plugin.getLogger().info("맵 중심 좌표 로드 시도: " + COMMAND_MAIN_NAME + ", " + currentMap);
             Location center = plugin.getBlockRestoreManager().getMapCenter(COMMAND_MAIN_NAME, currentMap);
             if (center != null) {
                 setArenaCenter(center);
+                plugin.getLogger().info("맵 중심 좌표 설정 완료: " + center);
             } else {
                 plugin.getLogger().warning("맵 '" + currentMap + "'의 중심 좌표를 찾을 수 없습니다.");
             }
+        } else {
+            plugin.getLogger().warning("currentMap이 null입니다.");
         }
     }
-
     // 로비 BossBar 업데이트
     protected void updateLobbyBossBar() {
         if (state == MinigameState.WAITING || state == MinigameState.STARTING) {
@@ -1142,10 +1153,15 @@ public abstract class Minigame {
             Player winner = sortedScores.get(0).getKey();
             broadcastTitle("§6" + winner.getName(), "§e1위 축하합니다!", 10, 70, 20);
 
-            // 우승자 위치에서 폭죽 발사
-            Bukkit.getScheduler().runTaskLater(plugin, () -> {
-                spawnFireworks(winner.getLocation(), 3);
-            }, 40L); // 2초 후 폭죽 발사
+            if (plugin.isEnabled()) {
+                // 우승자 위치에서 폭죽 발사
+                Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                    if (plugin.isEnabled()) {
+                        spawnFireworks(winner.getLocation(), 3);
+                    }
+                }, 40L); // 2초 후 폭죽 발사
+            }
+
         }
     }
 
@@ -1574,7 +1590,7 @@ public abstract class Minigame {
         current_player = 0;
         countdownTime = DEFAULT_COUNTDOWN_TIME; // 카운트다운 시간 초기화
         // 맵 선택 초기화
-        currentMap = null;
+        //currentMap = null;
 
         // 게임 특정 데이터 초기화
         resetGameSpecificData();
@@ -1722,6 +1738,7 @@ public abstract class Minigame {
             blockRestoreManager.logBlockChange(blockState.getBlock(), true, this.COMMAND_MAIN_NAME, this.currentMap);
         }
     }
+
     // 복구 영역 설정 메소드
     public void setRestoreRegion(String gameName, String mapName, Location pos1, Location pos2) {
         if (useBlockRestore) {
@@ -1729,16 +1746,16 @@ public abstract class Minigame {
         }
     }
 
-    //맵 목록 확인 메소드
     public List<String> getUnsetRestoreRegionMaps() {
         if (!useBlockRestore) {
             return Collections.emptyList();
         }
-        return config.getMaps().stream()
+        List<String> unsetMaps = config.getMaps().stream()
                 .filter(map -> !blockRestoreManager.isRestoreRegionSet(COMMAND_MAIN_NAME, map))
                 .collect(Collectors.toList());
+        plugin.getLogger().info("설정되지 않은 맵: " + unsetMaps);
+        return unsetMaps;
     }
-
     // 연속 킬
     public void handlePlayerKill(Player killer, Player victim) {
         killStreakManager.handleKill(killer, victim);
@@ -1906,5 +1923,9 @@ public abstract class Minigame {
 
     public BlockRestoreManager getBlockRestoreManager() {
         return blockRestoreManager;
+    }
+
+    public void setBlockRestoreManager(BlockRestoreManager manager) {
+        this.blockRestoreManager = manager;
     }
 }

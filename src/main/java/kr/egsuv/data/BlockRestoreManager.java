@@ -79,9 +79,9 @@ public class BlockRestoreManager implements Listener {
         this.isRestoring = false;
 
         loadConfig();
-        loadRestoreData();
         loadAllInitialStates();
         plugin.getServer().getPluginManager().registerEvents(this, plugin);
+        loadRestoreData();
     }
 
 
@@ -196,7 +196,6 @@ public class BlockRestoreManager implements Listener {
                     plugin.getLogger().info("기록된 변경사항 복구 중: " + blocksRestored + "개 블록 복구됨");
                 }
 
-
                 private void restoreFromInitialState(String gameName, String mapName) {
                     long startTime = System.currentTimeMillis();
                     int blocksRestored = 0;
@@ -253,6 +252,7 @@ public class BlockRestoreManager implements Listener {
             SerializableBlockState initialState = entry.getValue();
             Block currentBlock = loc.getBlock();
             if (!initialState.equals(new SerializableBlockState(currentBlock.getState()))) {
+                plugin.getLogger().info("불일치 발견: " + loc + ", 초기: " + initialState + ", 현재: " + new SerializableBlockState(currentBlock.getState()));
                 return false;
             }
         }
@@ -284,7 +284,15 @@ public class BlockRestoreManager implements Listener {
     }
 
     public void setRestoreRegion(String gameName, String mapName, Location pos1, Location pos2) {
-        CuboidRegion region = new CuboidRegion(pos1, pos2);
+        CuboidRegion region = new CuboidRegion("world",
+                Math.min(pos1.getBlockX(), pos2.getBlockX()),
+                Math.min(pos1.getBlockY(), pos2.getBlockY()),
+                Math.min(pos1.getBlockZ(), pos2.getBlockZ()),
+                Math.max(pos1.getBlockX(), pos2.getBlockX()),
+                Math.max(pos1.getBlockY(), pos2.getBlockY()),
+                Math.max(pos1.getBlockZ(), pos2.getBlockZ())
+        );
+
         gameMapRegions.computeIfAbsent(gameName, k -> new ConcurrentHashMap<>())
                 .put(mapName, region);
 
@@ -293,7 +301,13 @@ public class BlockRestoreManager implements Listener {
         gameMapCenters.computeIfAbsent(gameName, k -> new ConcurrentHashMap<>())
                 .put(mapName, center);
 
-        saveRestoreData();
+        plugin.getLogger().info("복구 영역 설정: " + gameName + ", " + mapName + ", " +
+                "World: world, " +
+                "Min: (" + region.getMinX() + ", " + region.getMinY() + ", " + region.getMinZ() + "), " +
+                "Max: (" + region.getMaxX() + ", " + region.getMaxY() + ", " + region.getMaxZ() + ")");
+        plugin.getLogger().info("맵 중심 좌표 설정: " + center);
+        plugin.getLogger().info("현재 gameMapRegions: " + gameMapRegions);
+        plugin.getLogger().info("현재 gameMapCenters: " + gameMapCenters);
     }
 
     private Location calculateMapCenter(String gameName, String mapName, Location pos1, Location pos2) {
@@ -301,7 +315,7 @@ public class BlockRestoreManager implements Listener {
         double centerZ = (pos1.getZ() + pos2.getZ()) / 2;
 
         // Y 좌표 계산: 모든 스폰 위치 중 가장 높은 Y 좌표 사용
-        double maxY = pos1.getY();
+        double maxY = Math.max(pos1.getY(), pos2.getY());
         MinigameConfig config = plugin.getMinigameConfig(gameName);
 
         if (config != null) {
@@ -324,20 +338,17 @@ public class BlockRestoreManager implements Listener {
 
                 // 모든 스폰 위치 중 가장 높은 Y 좌표 찾기
                 for (Location loc : spawnLocations) {
-                    if (loc.getY() > maxY) {
+                    if (loc != null && loc.getY() > maxY) {
                         maxY = loc.getY();
                     }
                 }
             }
         } else {
             plugin.getLogger().warning("게임 '" + gameName + "'에 대한 설정을 찾을 수 없습니다.");
-            // 설정을 찾을 수 없는 경우, pos1과 pos2의 Y 좌표 중 높은 것을 사용
-            maxY = Math.max(pos1.getY(), pos2.getY());
         }
 
         return new Location(pos1.getWorld(), centerX, maxY, centerZ);
     }
-
     private boolean isInRestoreRegion(String gameName, String mapName, Location location) {
         Map<String, CuboidRegion> mapRegions = gameMapRegions.get(gameName);
         if (mapRegions == null) return false;
@@ -403,70 +414,65 @@ public class BlockRestoreManager implements Listener {
         }
         try {
             config.save(dataFile);
-            plugin.getLogger().info("복구 데이터 저장 완료");
+            plugin.getLogger().info("복구 데이터 저장 완료: " + dataFile.getAbsolutePath());
+            plugin.getLogger().info("저장된 데이터: " + config.saveToString());
         } catch (IOException e) {
             plugin.getLogger().log(Level.SEVERE, "복구 데이터 저장 중 오류 발생", e);
         }
     }
 
-
     public void loadRestoreData() {
         if (!dataFile.exists()) {
-            plugin.getLogger().warning("복구 데이터 파일이 존재하지 않습니다.");
+            plugin.getLogger().warning("복구 데이터 파일이 존재하지 않습니다: " + dataFile.getAbsolutePath());
             return;
         }
         YamlConfiguration config = YamlConfiguration.loadConfiguration(dataFile);
+        plugin.getLogger().info("로드된 데이터: " + config.saveToString());
+
+        gameMapRegions.clear();
+        gameMapCenters.clear();
+
         for (String gameName : config.getKeys(false)) {
             ConfigurationSection gameSection = config.getConfigurationSection(gameName);
-            if (gameSection == null) continue;
-            for (String mapName : gameSection.getKeys(false)) {
-                String path = gameName + "." + mapName + ".initialStates";
-                ConfigurationSection statesSection = gameSection.getConfigurationSection(path);
-                if (statesSection == null) continue;
-
-                Map<SerializableLocation, SerializableBlockState> blockStates = new HashMap<>();
-                for (String locKey : statesSection.getKeys(false)) {
-                    String[] parts = locKey.split(",");
-                    SerializableLocation loc = new SerializableLocation(parts[0], Integer.parseInt(parts[1]), Integer.parseInt(parts[2]), Integer.parseInt(parts[3]));
-                    Material type = Material.valueOf(statesSection.getString(locKey + ".type"));
-                    String data = statesSection.getString(locKey + ".data");
-                    SerializableBlockState state = new SerializableBlockState(type, data);
-                    blockStates.put(loc, state);
-                }
-                initialBlockStates.computeIfAbsent(gameName, k -> new ConcurrentHashMap<>()).put(mapName, blockStates);
+            if (gameSection == null) {
+                plugin.getLogger().warning("게임 섹션을 찾을 수 없습니다: " + gameName);
+                continue;
             }
             for (String mapName : gameSection.getKeys(false)) {
-                String path = gameName + "." + mapName + ".";
-                String world = gameSection.getString(path + "world");
-                int minX = gameSection.getInt(path + "minX");
-                int minY = gameSection.getInt(path + "minY");
-                int minZ = gameSection.getInt(path + "minZ");
-                int maxX = gameSection.getInt(path + "maxX");
-                int maxY = gameSection.getInt(path + "maxY");
-                int maxZ = gameSection.getInt(path + "maxZ");
-
-                CuboidRegion region = new CuboidRegion(world, minX, minY, minZ, maxX, maxY, maxZ);
-                gameMapRegions.computeIfAbsent(gameName, k -> new ConcurrentHashMap<>()).put(mapName, region);
-
-                if (gameSection.contains(path + "center")) {
-                    double centerX = gameSection.getDouble(path + "center.x");
-                    double centerY = gameSection.getDouble(path + "center.y");
-                    double centerZ = gameSection.getDouble(path + "center.z");
-                    String centerWorld = gameSection.getString(path + "center.world", world);
-                    World bukkitWorld = Bukkit.getWorld(centerWorld);
-                    if (bukkitWorld != null) {
-                        Location center = new Location(bukkitWorld, centerX, centerY, centerZ);
-                        gameMapCenters.computeIfAbsent(gameName, k -> new ConcurrentHashMap<>()).put(mapName, center);
-                    } else {
-                        plugin.getLogger().warning("센터 좌표의 월드를 찾을 수 없습니다: " + centerWorld);
-                    }
-                }
+                loadMapData(gameName, mapName, gameSection);
             }
         }
+        plugin.getLogger().info("복구 데이터 로드 완료. gameMapRegions: " + gameMapRegions + ", gameMapCenters: " + gameMapCenters);
+    }
+    private void loadMapData(String gameName, String mapName, ConfigurationSection config) {
+        String path = mapName + ".";
+        int minX = config.getInt(path + "minX");
+        int minY = config.getInt(path + "minY");
+        int minZ = config.getInt(path + "minZ");
+        int maxX = config.getInt(path + "maxX");
+        int maxY = config.getInt(path + "maxY");
+        int maxZ = config.getInt(path + "maxZ");
 
-        plugin.getLogger().info("복구 데이터 로드 완료");
+        CuboidRegion region = new CuboidRegion("world", minX, minY, minZ, maxX, maxY, maxZ);
+        gameMapRegions.computeIfAbsent(gameName, k -> new ConcurrentHashMap<>()).put(mapName, region);
+        plugin.getLogger().info("복구 영역 로드: " + gameName + ", " + mapName + ", " + region);
+
+        if (config.contains(path + "center")) {
+            double centerX = config.getDouble(path + "center.x");
+            double centerY = config.getDouble(path + "center.y");
+            double centerZ = config.getDouble(path + "center.z");
+            Location center = new Location(Bukkit.getWorld("world"), centerX, centerY, centerZ);
+            gameMapCenters.computeIfAbsent(gameName, k -> new ConcurrentHashMap<>()).put(mapName, center);
+            plugin.getLogger().info("맵 중심 좌표 로드: " + gameName + ", " + mapName + ", " + center);
+        }
     }
 
+    private void scheduleDelayedLoad(String gameName, String mapName, ConfigurationSection config) {
+        plugin.getLogger().info("월드가 아직 로드되지 않았습니다. 지연 로딩을 예약합니다: " + gameName + ", " + mapName);
+        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            loadMapData(gameName, mapName, config);
+        }, 100L); // 5초 후 다시 시도
+    }
     @EventHandler
     public void onPlayerInteract(PlayerInteractEvent event) {
         Player player = event.getPlayer();
@@ -504,6 +510,11 @@ public class BlockRestoreManager implements Listener {
         saveInitialBlockStates(gameName, mapName, pos1, pos2);
         player.sendMessage(Prefix.SERVER + "맵 '" + mapName + "'의 복구 영역이 설정되고 초기 상태가 저장되었습니다.");
 
+        // 맵 중심 좌표 계산 및 저장
+        Location center = calculateMapCenter(gameName, mapName, pos1, pos2);
+        gameMapCenters.computeIfAbsent(gameName, k -> new ConcurrentHashMap<>()).put(mapName, center);
+        player.sendMessage(Prefix.SERVER + "맵 '" + mapName + "'의 중심 좌표가 설정되었습니다: " + center);
+
         pos1Map.remove(player);
         pos2Map.remove(player);
 
@@ -519,8 +530,9 @@ public class BlockRestoreManager implements Listener {
                 player.sendMessage(Prefix.SERVER + "아직 설정되지 않은 맵: " + String.join(", ", unsetMaps));
             }
         }
-    }
 
+        saveRestoreData();  // 변경사항 저장
+    }
     private void saveInitialBlockStates(String gameName, String mapName, Location pos1, Location pos2) {
         World world = pos1.getWorld();
         int minX = Math.min(pos1.getBlockX(), pos2.getBlockX());
@@ -585,9 +597,11 @@ public class BlockRestoreManager implements Listener {
 
     public boolean isRestoreRegionSet(String gameName, String mapName) {
         Map<String, CuboidRegion> mapRegions = gameMapRegions.get(gameName);
-        return mapRegions != null && mapRegions.containsKey(mapName);
+        boolean isSet = mapRegions != null && mapRegions.containsKey(mapName);
+        plugin.getLogger().info("isRestoreRegionSet 확인: " + gameName + ", " + mapName + " - 결과: " + isSet);
+        plugin.getLogger().info("현재 gameMapRegions: " + gameMapRegions);
+        return isSet;
     }
-
     public Location getPos1(Player player) {
         return pos1Map.get(player);
     }
@@ -653,6 +667,20 @@ public class BlockRestoreManager implements Listener {
         return String.format("X: %d, Y: %d, Z: %d", location.getBlockX(), location.getBlockY(), location.getBlockZ());
     }
 
+    public void reloadData() {
+        loadRestoreData();
+        plugin.getLogger().info("BlockRestoreManager 데이터 재로드 완료");
+        plugin.getLogger().info("gameMapRegions: " + gameMapRegions);
+        plugin.getLogger().info("gameMapCenters: " + gameMapCenters);
+    }
+
+    public Map<String, Map<String, CuboidRegion>> getGameMapRegions() {
+        return gameMapRegions;
+    }
+
+    public Map<String, Map<String, Location>> getGameMapCenters() {
+        return gameMapCenters;
+    }
     private static class ChunkPosition implements Serializable {
         private static final long serialVersionUID = 1L;
         private final int x;
@@ -762,6 +790,7 @@ public class BlockRestoreManager implements Listener {
         public int getMaxZ() { return maxZ; }
     }
 
+/*
     // setRestoreRegion 메소드 수정
     public void setRestoreRegion(String gameName, String mapName, CuboidRegion region) {
         gameMapRegions.computeIfAbsent(gameName, k -> new ConcurrentHashMap<>())
@@ -773,6 +802,7 @@ public class BlockRestoreManager implements Listener {
                 "Max: (" + region.getMaxX() + ", " + region.getMaxY() + ", " + region.getMaxZ() + ")");
     }
 
+*/
 
     private String getCurrentGameName(Location location) {
         for (Map.Entry<String, Map<String, CuboidRegion>> gameEntry : gameMapRegions.entrySet()) {
@@ -797,9 +827,33 @@ public class BlockRestoreManager implements Listener {
     }
 
     public Location getMapCenter(String gameName, String mapName) {
-        return gameMapCenters.getOrDefault(gameName, Collections.emptyMap()).get(mapName);
-    }
+        plugin.getLogger().info("getMapCenter 호출: " + gameName + ", " + mapName);
+        plugin.getLogger().info("현재 gameMapCenters: " + gameMapCenters);
+        plugin.getLogger().info("현재 gameMapRegions: " + gameMapRegions);
 
+        Location center = gameMapCenters.getOrDefault(gameName, Collections.emptyMap()).get(mapName);
+        if (center == null) {
+            plugin.getLogger().warning("맵 중심 좌표를 찾을 수 없습니다: " + gameName + ", " + mapName);
+            CuboidRegion region = gameMapRegions.getOrDefault(gameName, Collections.emptyMap()).get(mapName);
+            if (region != null) {
+                center = calculateMapCenter(gameName, mapName,
+                        new Location(Bukkit.getWorld("world"), region.getMinX(), region.getMinY(), region.getMinZ()),
+                        new Location(Bukkit.getWorld("world"), region.getMaxX(), region.getMaxY(), region.getMaxZ()));
+                if (center != null) {
+                    gameMapCenters.computeIfAbsent(gameName, k -> new ConcurrentHashMap<>()).put(mapName, center);
+                    plugin.getLogger().info("맵 중심 좌표 계산: " + gameName + ", " + mapName + ", " + center);
+                    saveRestoreData();  // 새로 계산된 중심 좌표 저장
+                } else {
+                    plugin.getLogger().warning("맵 중심 좌표 계산 실패: " + gameName + ", " + mapName);
+                }
+            } else {
+                plugin.getLogger().warning("맵의 영역 정보를 찾을 수 없습니다: " + gameName + ", " + mapName);
+            }
+        } else {
+            plugin.getLogger().info("맵 중심 좌표 반환: " + gameName + ", " + mapName + ", " + center);
+        }
+        return center;
+    }
     @EventHandler
     public void onEntityExplode(EntityExplodeEvent event) {
         if (!(event.getEntity() instanceof Fireball)) return;
