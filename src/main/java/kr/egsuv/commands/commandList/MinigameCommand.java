@@ -4,11 +4,9 @@ import kr.egsuv.EGServerMain;
 import kr.egsuv.chat.Prefix;
 import kr.egsuv.commands.Command;
 import kr.egsuv.config.MinigameConfig;
-import kr.egsuv.data.BlockRestoreManager;
 import kr.egsuv.data.MinigameData;
 import kr.egsuv.data.PlayerData;
 import kr.egsuv.minigames.Minigame;
-import kr.egsuv.minigames.MinigamePenaltyManager;
 import kr.egsuv.minigames.MinigameState;
 import kr.egsuv.minigames.TeamType;
 import org.bukkit.Location;
@@ -19,7 +17,6 @@ import org.bukkit.inventory.ItemStack;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 public class MinigameCommand implements Command {
 
@@ -155,6 +152,7 @@ public class MinigameCommand implements Command {
 
         game.setState(MinigameState.REPAIRING);
         game.getBlockRestoreManager().startRestoration(game, mapName);
+        game.finalizeGameEnd();
         player.sendMessage(Prefix.SERVER + "맵 '" + mapName + "' 복구를 시작합니다.");
         return true;
     }
@@ -211,7 +209,7 @@ public class MinigameCommand implements Command {
 
     private boolean stopGame(Player player, Minigame game) {
         if (!hasAdminPermission(player)) return true;
-        game.forceEndGame();
+        game.forceEnd();
         player.sendMessage("§c15초 뒤 게임이 종료됩니다. 반드시 명령어를 한번만 치세요");
         return true;
     }

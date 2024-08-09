@@ -4,11 +4,14 @@ import kr.egsuv.chat.Prefix;
 import kr.egsuv.commands.CommandTabCompleter;
 import kr.egsuv.commands.commandList.*;
 import kr.egsuv.config.ConfigManager;
+import kr.egsuv.config.MinigameConfig;
+import kr.egsuv.data.BlockRestoreManager;
 import kr.egsuv.data.DataManager;
 import kr.egsuv.listeners.*;
 import kr.egsuv.commands.CommandManager;
 import kr.egsuv.minigames.*;
 import kr.egsuv.minigames.games.FirstHitGame;
+import kr.egsuv.minigames.games.SpleefGame;
 import kr.egsuv.minigames.games.TeamDeathmatchGame;
 import kr.egsuv.ranking.RankingManager;
 import org.bukkit.Bukkit;
@@ -34,11 +37,15 @@ public final class EGServerMain extends JavaPlugin implements Listener {
     private DataManager dataManager;
     private MinigameItems minigameItems;
     private MinigamePenaltyManager minigamePenaltyManager;
+    private MinigameConfig minigameConfig;
 
     // 미니게임
     private FirstHitGame firstHitGame;
     private TeamDeathmatchGame teamDeathmatchGame;
+    private SpleefGame spleefGame;
 
+    // 맵 복구
+    private BlockRestoreManager blockRestoreManager;
 
     private Map<UUID, String> playerList = new HashMap<>();
     private List<Minigame> minigameList = new ArrayList<>();
@@ -54,14 +61,15 @@ public final class EGServerMain extends JavaPlugin implements Listener {
             playerList.put(onlinePlayer.getUniqueId(), "로비");
         }
         instance = this;
+        blockRestoreManager = new BlockRestoreManager();
         commandManager = new CommandManager();
         miniGamesGui = new MinigameGui();
         configManager = new ConfigManager();
-        spawnCommand = new SpawnCommand(miniGamesGui);
         rankingManager = new RankingManager();
         dataManager = new DataManager();
         minigameItems = new MinigameItems();
         minigamePenaltyManager = new MinigamePenaltyManager();
+        spawnCommand = new SpawnCommand(miniGamesGui);
 
         MinigamePenaltyManager.startCleanupTask(this);
 
@@ -74,6 +82,10 @@ public final class EGServerMain extends JavaPlugin implements Listener {
         teamDeathmatchGame = new TeamDeathmatchGame(this, minigameItems, "tdm", 4, 12,
                 "§c팀 데스매치§r", true, TeamType.DUO, 2, false, false);
         minigameList.add(teamDeathmatchGame);
+
+        //SpleefGame 추가
+        spleefGame = new SpleefGame(this, minigameItems, "spf", 2, 10, "§b스플리프", true);
+        minigameList.add(spleefGame);
 
         //리스너 등록
         registerListeners();
@@ -119,7 +131,7 @@ public final class EGServerMain extends JavaPlugin implements Listener {
 
             try {
                 if (minigame.getState() == MinigameState.IN_PROGRESS || minigame.getState() == MinigameState.ENDING) {
-                    minigame.forceEndGame();
+                    minigame.forceEnd();
                 }
                 if (minigame.useBlockRestore) {
                     minigame.getBlockRestoreManager().forceRestoreAllMaps();
@@ -292,4 +304,19 @@ public final class EGServerMain extends JavaPlugin implements Listener {
 
         return null; // 플레이어가 게임 중이 아님
     }
+
+    // 해당 미니게임의 Config 찾기
+    public MinigameConfig getMinigameConfig(String gameName) {
+        Minigame minigame = getMinigameByName(gameName);
+        if (minigame != null) {
+            return minigame.getConfig();
+        }
+        return null;
+    }
+
+
+    public BlockRestoreManager getBlockRestoreManager() {
+        return blockRestoreManager;
+    }
+
 }

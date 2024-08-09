@@ -12,14 +12,12 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.TextComponent;
 import net.kyori.adventure.text.event.HoverEvent;
 import net.kyori.adventure.text.format.NamedTextColor;
-import net.md_5.bungee.api.ChatMessageType;
 import org.bukkit.*;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
 import org.bukkit.boss.BarColor;
 import org.bukkit.boss.BarStyle;
-import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Firework;
 import org.bukkit.entity.Player;
@@ -27,6 +25,7 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.FireworkMeta;
 import org.bukkit.inventory.meta.LeatherArmorMeta;
 import org.bukkit.potion.PotionEffect;
+import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.scoreboard.DisplaySlot;
@@ -98,9 +97,15 @@ public abstract class Minigame {
     protected String currentMap;
     protected Map<String, ItemStack> mapIcons = new HashMap<>();
 
+    // 맵 센터
+    protected Location arenaCenter;
+
     // 맵 복구
     public final boolean useBlockRestore;
     protected BlockRestoreManager blockRestoreManager;
+
+    // Task 관리
+    protected List<BukkitTask> activeTasks = new ArrayList<>();
 
     // 팀 색상 정의
     protected static final Map<String, NamedTextColor> TEAM_COLORS = Map.of(
@@ -119,6 +124,8 @@ public abstract class Minigame {
     public boolean isRedBlueTeamGame;
 
 
+
+
     // 개인전 생성자
     public Minigame(EGServerMain plugin, MinigameItems minigameItems, String commandMainName, int MIN_PLAYER, int MAX_PLAYER, String displayGameName, boolean useBlockRestore) {
         this.plugin = plugin;
@@ -128,7 +135,9 @@ public abstract class Minigame {
         this.DISPLAY_GAME_NAME = displayGameName;
         this.useBlockRestore = useBlockRestore;
         if (useBlockRestore) {
-            this.blockRestoreManager = new BlockRestoreManager(1000); // 1틱당 1000개 블록 복구
+            this.blockRestoreManager = plugin.getBlockRestoreManager();
+            // 필요한 경우 블록 복구 속도를 설정
+            this.blockRestoreManager.setBlocksPerTick(1000);
         }
         this.config = new MinigameConfig(plugin, commandMainName);
         this.teamType = TeamType.SOLO; // teamType을 여기서 초기화합니다.
@@ -168,7 +177,9 @@ public abstract class Minigame {
         this.isRedBlueTeamGame = isRedBlueTeamGame;
         this.useBlockRestore = useBlockRestore;
         if (useBlockRestore) {
-            this.blockRestoreManager = new BlockRestoreManager(1000); // 1틱당 1000개 블록 복구
+            this.blockRestoreManager = plugin.getBlockRestoreManager();
+            // 필요한 경우 블록 복구 속도를 설정
+            this.blockRestoreManager.setBlocksPerTick(1000);
         }
         this.config = new MinigameConfig(plugin, commandMainName);
 
@@ -204,6 +215,7 @@ public abstract class Minigame {
         this.itemPickupAllowed = itemPickupAllowed;
         this.itemMoveAllowed = itemMoveAllowed;
     }
+
     // 팀 할당 및 스코어보드 설정을 위한 공통 메서드
     protected void setupTeamsAndScoreboard() {
         scoreboard = Bukkit.getScoreboardManager().getNewScoreboard();
@@ -552,6 +564,7 @@ public abstract class Minigame {
             }
         }
 
+        cancelAllTasks();
         state = MinigameState.STARTING;
 
         if (countdownTask != null) {
@@ -684,6 +697,9 @@ public abstract class Minigame {
         // KD 스탯 초기화
         resetKDStats();
 
+        // 맵 아이콘 로드
+        loadMapIcons();
+
         // 게임 시작 메시지 출력
         broadcastToPlayers(Component.text(Prefix.SERVER + "§e" + getDisplayGameName() + " §r게임이 시작되었습니다!"));
 
@@ -698,6 +714,18 @@ public abstract class Minigame {
             MapSelectionGUI mapGUI = new MapSelectionGUI(plugin, this, mapIcons);
             mapGUI.show();
         });
+    }
+
+    // 맵 아이콘 제대로 불러오는지 디버깅
+    protected void loadMapIcons() {
+        for (String mapName : config.getMaps()) {
+            ItemStack icon = config.getMapIcon(mapName);
+            if (icon != null) {
+                mapIcons.put(mapName, icon);
+            } else {
+                plugin.getLogger().warning("맵 '" + mapName + "'의 아이콘을 찾을 수 없습니다.");
+            }
+        }
     }
 
     // 맵이 선택 된 후에 해당 메소드 호출
@@ -726,6 +754,9 @@ public abstract class Minigame {
             assignTeams();
         }
         setupTeamsAndScoreboard();
+
+        // 센터 계산 후 설정
+        loadArenaCenterFromConfig();
 
         // 플레이어 초기화 및 텔레포트
         for (Player player : players) {
@@ -837,6 +868,7 @@ public abstract class Minigame {
     public void endGame(boolean isAbnormalEnd) {
         if (state == MinigameState.ENDING) return; // 이미 종료 프로세스가 시작되었다면 중복 실행 방지
 
+        cancelAllTasks();
         onGameEnd();
         cancelCountdown();
         state = MinigameState.ENDING;
@@ -850,7 +882,8 @@ public abstract class Minigame {
             }
         }
 
-        if (useBlockRestore) {
+
+        if (useBlockRestore && currentMap != null) {
             blockRestoreManager.saveAllChanges(currentMap);
         }
 
@@ -878,17 +911,13 @@ public abstract class Minigame {
         Bukkit.getScheduler().runTaskLater(plugin, () -> {
             // 모든 플레이어의 스코어보드를 기본 스코어보드로 재설정하고 무적 상태 해제
             for (Player player : new ArrayList<>(players)) {
-
                 gameQuitPlayer(player);
-                player.setInvulnerable(false);
-                if (!disconnectedPlayers.contains(player.getUniqueId())) {
-                    MinigamePenaltyManager.clearPlayerData(player.getUniqueId());
-                }
             }
 
             if (useBlockRestore && currentMap != null) {
                 state = MinigameState.REPAIRING;
                 blockRestoreManager.startRestoration(this, currentMap);
+                finalizeGameEnd();
             } else {
                 finalizeGameEnd();
             }
@@ -902,6 +931,52 @@ public abstract class Minigame {
         state = MinigameState.WAITING;
     }
 
+    protected void gameRestoration() {
+        if (!useBlockRestore || currentMap == null) {
+            startNextRound();
+            return;
+        }
+
+        // 모든 플레이어를 관전 모드로 변경
+        for (Player player : players) {
+            player.setGameMode(GameMode.SPECTATOR);
+            player.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, Integer.MAX_VALUE, 1, false, false));
+        }
+
+        // 맵 복구 중 타이틀 표시
+        broadcastTitle("§6라운드 대기중", "§e맵 재설정", 10, 70, 20);
+
+        // 맵 복구 시작
+        blockRestoreManager.startRestoration(this, currentMap);
+    }
+
+    public void onRestorationComplete() {
+        // 맵 복구 완료 후 실행될 코드
+        for (Player player : players) {
+            player.removePotionEffect(PotionEffectType.BLINDNESS);
+        }
+        broadcastTitle("§a맵 복구 완료", "§e3초 후 다음 라운드가 시작됩니다", 10, 40, 10);
+
+        Bukkit.getScheduler().runTaskLater(plugin, this::startNextRound, 60L); // 3초 후 다음 라운드 시작
+    }
+
+    protected void startNextRound() {
+        new BukkitRunnable() {
+            int count = 3;
+
+            @Override
+            public void run() {
+                if (count > 0) {
+                    broadcastTitle("§6" + count, "§e라운드 시작 카운트다운", 5, 10, 5);
+                    count--;
+                } else {
+                    broadcastTitle("§a라운드 시작!", "", 5, 20, 5);
+                    this.cancel();
+                    Bukkit.getScheduler().runTask(plugin, () -> resumeGame());
+                }
+            }
+        }.runTaskTimer(plugin, 0L, 20L);
+    }
 
     // 강제 실행
     public void forceStart() {
@@ -920,8 +995,13 @@ public abstract class Minigame {
     }
 
     //강제 종료
-    public void forceEndGame() {
+    public void forceEnd() {
+        if (state == MinigameState.DISABLED) {
+            state = MinigameState.WAITING;
+            return;
+        }
         if (state == MinigameState.IN_PROGRESS || state == MinigameState.ENDING) {
+            cancelAllTasks();
             onGameEnd();
             for (Player player : new ArrayList<>(players)) {
                 gameQuitPlayer(player);
@@ -931,6 +1011,66 @@ public abstract class Minigame {
             }
             resetGame();
             state = MinigameState.WAITING;
+        }
+        if (state == MinigameState.WAITING) {
+            teleportToSpawnLobbyAllPlayers();
+            state = MinigameState.DISABLED;
+        }
+    }
+    // 모든 Task 종료
+    protected void cancelAllTasks() {
+        if (countdownTask != null) {
+            countdownTask.cancel();
+            countdownTask = null;
+        }
+        for (BukkitTask task : activeTasks) {
+            task.cancel();
+        }
+        activeTasks.clear();
+    }
+
+    // Task를 시작할 때 사용할 새로운 메소드
+    protected BukkitTask runTask(Runnable runnable) {
+        BukkitTask task = Bukkit.getScheduler().runTask(plugin, runnable);
+        activeTasks.add(task);
+        return task;
+    }
+
+    protected BukkitTask runTaskLater(Runnable runnable, long delay) {
+        BukkitTask task = Bukkit.getScheduler().runTaskLater(plugin, runnable, delay);
+        activeTasks.add(task);
+        return task;
+    }
+
+    protected BukkitTask runTaskTimer(Runnable runnable, long delay, long period) {
+        BukkitTask task = Bukkit.getScheduler().runTaskTimer(plugin, runnable, delay, period);
+        activeTasks.add(task);
+        return task;
+    }
+
+    // 맵 센터 계산
+    // arenaCenter 설정 메소드
+    protected void setArenaCenter(Location center) {
+        this.arenaCenter = center;
+    }
+
+    // arenaCenter 가져오기 메소드
+    protected Location getArenaCenter() {
+        if (arenaCenter == null) {
+            loadArenaCenterFromConfig();
+        }
+        return arenaCenter;
+    }
+
+    // config에서 arenaCenter 로드
+    private void loadArenaCenterFromConfig() {
+        if (currentMap != null) {
+            Location center = plugin.getBlockRestoreManager().getMapCenter(COMMAND_MAIN_NAME, currentMap);
+            if (center != null) {
+                setArenaCenter(center);
+            } else {
+                plugin.getLogger().warning("맵 '" + currentMap + "'의 중심 좌표를 찾을 수 없습니다.");
+            }
         }
     }
 
@@ -1048,6 +1188,10 @@ public abstract class Minigame {
             player.getInventory().clear();
             player.setInvulnerable(false);
             plugin.teleportToSpawn(player);
+
+            if (!disconnectedPlayers.contains(player.getUniqueId())) {
+                MinigamePenaltyManager.clearPlayerData(player.getUniqueId());
+            }
 
             if (isTeamGame) {
                 String team = getPlayerTeam(player);
@@ -1367,6 +1511,19 @@ public abstract class Minigame {
         }
     }
 
+    public void teleportToSpawnLobbyAllPlayers() {
+        for (Player player : players) {
+            Location spawnLocation = getRandomSpawnLocation(player);
+            player.teleport(spawnLocation);
+            if (spawnLocation !=null) {
+                plugin.safelyTeleportPlayer(player, spawnLocation);
+            } else {
+                player.sendMessage(Prefix.SERVER + "로비 위치가 설정되지 않았습니다. 관리자에게 문의하세요");
+            }
+        }
+
+    }
+
     private void preparePlayerForGame(Player player) {
         player.getInventory().clear();
         player.getInventory().setItem(8, HELPER_ITEM);
@@ -1556,16 +1713,15 @@ public abstract class Minigame {
     // 블록 파괴 이벤트 처리
     public void handleBlockBreak(Block block) {
         if (useBlockRestore) {
-            blockRestoreManager.logBlockChange(block, this.COMMAND_MAIN_NAME, this.currentMap);
-        }
-    }
-    // 블록 설치 이벤트 처리
-    public void handleBlockPlace(BlockState blockState) {
-        if (useBlockRestore) {
-            blockRestoreManager.logBlockChange(blockState.getBlock(), this.COMMAND_MAIN_NAME, this.currentMap);
+            blockRestoreManager.logBlockChange(block, false, this.COMMAND_MAIN_NAME, this.currentMap);
         }
     }
 
+    public void handleBlockPlace(BlockState blockState) {
+        if (useBlockRestore) {
+            blockRestoreManager.logBlockChange(blockState.getBlock(), true, this.COMMAND_MAIN_NAME, this.currentMap);
+        }
+    }
     // 복구 영역 설정 메소드
     public void setRestoreRegion(String gameName, String mapName, Location pos1, Location pos2) {
         if (useBlockRestore) {
@@ -1677,8 +1833,11 @@ public abstract class Minigame {
 
     protected abstract void onGameStart();
     protected abstract void onGameEnd();
-
+    // Minigame클래스의 gameRestoration() -> startNextRound() -> resumeGame() 실행
+    protected abstract void resumeGame();
     protected abstract void setupGameSpecificRules();
+
+
     protected abstract void removePlayerFromScoreboard(Player player);
 
     protected abstract void updateScoreboard();
@@ -1694,6 +1853,7 @@ public abstract class Minigame {
     public BossBar getLobbyBossBar() { return lobbyBossBar; }
     public int getGameTimeLimit() { return gameTimeLimit; }
     public Set<UUID> getDisconnectedPlayers() { return disconnectedPlayers; }
+
 
     public TeamType getTeamType() { return teamType; }
 
@@ -1747,5 +1907,4 @@ public abstract class Minigame {
     public BlockRestoreManager getBlockRestoreManager() {
         return blockRestoreManager;
     }
-
 }

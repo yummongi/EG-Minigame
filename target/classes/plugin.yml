@@ -27,7 +27,6 @@ commands:
   firsthit:
     description: 선빵 게임 명령어
     usage: /<command> [join|quit|start|set]
-
 permissions:
   egserver.admin:
     description: 관리자 권한

@@ -133,7 +133,8 @@ public class NoDropOrMoveListener implements Listener {
             Minigame currentGame = getCurrentGame(player);
             if (currentGame != null && currentGame.useBlockRestore) {
                 event.setCancelled(true);
-                currentGame.getBlockRestoreManager().handleBlazePodInteract(player, event.getAction());
+                // BlockRestoreManager의 onPlayerInteract 메소드를 직접 호출
+                plugin.getBlockRestoreManager().onPlayerInteract(event);
             }
         }
     }

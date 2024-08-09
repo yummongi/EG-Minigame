@@ -2,6 +2,7 @@ package kr.egsuv.listeners;
 
 import kr.egsuv.EGServerMain;
 import kr.egsuv.minigames.Minigame;
+import kr.egsuv.minigames.games.SpleefGame;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.title.Title;
@@ -24,16 +25,21 @@ public class PlayerDeathListener implements Listener {
     public void onPlayerDeath(PlayerDeathEvent event) {
         event.deathMessage(null);
         Player victim = event.getEntity();
-        Location deathLocation = victim.getLocation();
 
         // 플레이어가 게임 중인지 확인
         Minigame currentGame = plugin.getCurrentGame(victim);
         if (currentGame != null) {
             // 게임 중인 경우, 게임의 handlePlayerDeath 메소드 호출
             currentGame.handlePlayerDeath(victim);
+            // 스플리프 게임의 경우 즉시 리스폰
+            if (currentGame instanceof SpleefGame) {
+                Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                    victim.spigot().respawn();
+                }, 1L);
+            }
         } else {
             // 게임 중이 아닌 경우, 기본 리스폰 로직 적용
-            handleNormalDeath(victim, deathLocation);
+            handleNormalDeath(victim, victim.getLocation());
         }
     }
 

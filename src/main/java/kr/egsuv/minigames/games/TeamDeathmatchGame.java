@@ -92,6 +92,11 @@ public class TeamDeathmatchGame extends Minigame implements Listener {
 
     }
 
+    @Override
+    protected void resumeGame() {
+
+    }
+
 
 /*
     @Override

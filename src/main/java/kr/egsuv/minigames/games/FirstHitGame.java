@@ -176,6 +176,10 @@ public class FirstHitGame extends Minigame implements Listener {
         }
     }
 
+    @Override
+    protected void resumeGame() {
+
+    }
 
 
     @Override
@@ -215,8 +219,6 @@ public class FirstHitGame extends Minigame implements Listener {
     public void onPlayerDamage(EntityDamageByEntityEvent event) {
         if (getState() != MinigameState.IN_PROGRESS) return;
         if (!(event.getEntity() instanceof Player) || !(event.getDamager() instanceof Player)) return;
-
-
 
         Player damaged = (Player) event.getEntity();
         Player damager = (Player) event.getDamager();

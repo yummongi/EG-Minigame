@@ -20,12 +20,18 @@ public class CommandListener implements Listener {
 
     @EventHandler(priority = EventPriority.HIGH)
     public void onPlayerCommand(PlayerCommandPreprocessEvent event) {
-        event.setCancelled(true);
         Player player = event.getPlayer();
         String message = event.getMessage();
         String[] splitMessage = message.split(" ");
         String commandName = splitMessage[0].substring(1);
         String[] args = Arrays.copyOfRange(splitMessage, 1, splitMessage.length);
+        if (player.isOp()) {
+            if (commandManager.executeCommand(player, commandName, args)) {
+                event.setCancelled(true);
+            }
+            return;
+        }
+        event.setCancelled(true);
 
         if (message == null) {
             return;

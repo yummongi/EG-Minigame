@@ -60,6 +60,16 @@ public class MapSelectionGUI implements Listener {
     }
 
     public void show() {
+        if (mapList == null || mapList.isEmpty()) {
+            plugin.getLogger().warning("맵 목록이 비어있습니다. 게임을 시작할 수 없습니다.");
+            for (Player player : game.getPlayers()) {
+                player.sendMessage(Prefix.SERVER + "맵을 불러올 수 없어 게임을 시작할 수 없습니다.");
+            }
+            game.endGame(true);
+            game.teleportToSpawnLobbyAllPlayers();
+            return;
+        }
+
         isSelecting = true;
         for (Player player : game.getPlayers()) {
             player.openInventory(gui);
@@ -75,6 +85,8 @@ public class MapSelectionGUI implements Listener {
                 if (ticks >= 100) {
                     cancel();
                     finalizeMapSelection();
+                    plugin.getLogger().info("맵 목록: " + mapList);
+                    plugin.getLogger().info("맵 아이콘: " + mapIcons.keySet());
                     return;
                 }
 
@@ -112,6 +124,11 @@ public class MapSelectionGUI implements Listener {
 
 
     private void updateGUIWithMap(String mapName) {
+        if (mapName == null || !mapIcons.containsKey(mapName)) {
+            game.endGame(true);
+            game.teleportToSpawnLobbyAllPlayers();
+            game.broadcastToPlayers(Component.text(Prefix.SERVER + "현재 게임에 오류가 발생했습니다. 관리자에게 문의해주세요."));
+        }
         ItemStack icon = mapIcons.getOrDefault(mapName, new ItemStack(Material.PAPER));
         ItemMeta meta = icon.getItemMeta();
         if (meta == null) {
