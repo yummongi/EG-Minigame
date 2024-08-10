@@ -2,7 +2,7 @@ package kr.egsuv.listeners;
 
 import kr.egsuv.EGServerMain;
 import kr.egsuv.minigames.Minigame;
-import kr.egsuv.minigames.games.SpleefGame;
+import kr.egsuv.minigames.games.spleef.SpleefGame;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;

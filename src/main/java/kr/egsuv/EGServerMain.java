@@ -10,9 +10,10 @@ import kr.egsuv.data.DataManager;
 import kr.egsuv.listeners.*;
 import kr.egsuv.commands.CommandManager;
 import kr.egsuv.minigames.*;
-import kr.egsuv.minigames.games.FirstHitGame;
-import kr.egsuv.minigames.games.SpleefGame;
-import kr.egsuv.minigames.games.TeamDeathmatchGame;
+import kr.egsuv.minigames.games.firsthit.FirstHitGame;
+import kr.egsuv.minigames.games.godofwar.WarOfGodGame;
+import kr.egsuv.minigames.games.spleef.SpleefGame;
+import kr.egsuv.minigames.games.teamdeathmatch.TeamDeathmatchGame;
 import kr.egsuv.ranking.RankingManager;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -43,6 +44,7 @@ public final class EGServerMain extends JavaPlugin implements Listener {
     private FirstHitGame firstHitGame;
     private TeamDeathmatchGame teamDeathmatchGame;
     private SpleefGame spleefGame;
+    private WarOfGodGame warOfGodGame;
 
     // 맵 복구
     private BlockRestoreManager blockRestoreManager;
@@ -93,10 +95,12 @@ public final class EGServerMain extends JavaPlugin implements Listener {
         firstHitGame = new FirstHitGame(this, minigameItems, "fth", 2, 8, "§a선빵 게임§r", true);
         teamDeathmatchGame = new TeamDeathmatchGame(this, minigameItems, "tdm", 2, 12, "§c팀 데스매치§r", true, TeamType.DUO, 2, false, false);
         spleefGame = new SpleefGame(this, minigameItems, "spf", 2, 10, "§b스플리프", true);
+        warOfGodGame = new WarOfGodGame(this, minigameItems, "wog", 2, 8, "§6신들의 전쟁", true, TeamType.SQUAD, 2, false, true);
 
         minigameList.add(firstHitGame);
         minigameList.add(teamDeathmatchGame);
         minigameList.add(spleefGame);
+        minigameList.add(warOfGodGame);
 
         for (Minigame minigame : minigameList) {
             minigame.setBlockRestoreManager(blockRestoreManager);

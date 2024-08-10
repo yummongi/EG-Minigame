@@ -4,6 +4,7 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Material;
 import org.bukkit.enchantments.Enchantment;
+import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 
@@ -45,5 +46,23 @@ public class ItemUtils {
             loreComponents.add(Component.text(line).color(NamedTextColor.GRAY));
         }
         meta.lore(loreComponents);
+    }
+
+    public boolean takeItem(Player player, Material material, int amount) {
+        if (player.getInventory().containsAtLeast(new ItemStack(material), amount)) {
+            player.getInventory().removeItem(new ItemStack(material, amount));
+            return true;
+        }
+        return false;
+    }
+
+    public boolean hasItem(Player player, Material material, int amount) {
+        int itemCount = 0;
+        for (ItemStack item : player.getInventory().getContents()) {
+            if (item != null && item.getType() == material) {
+                itemCount += item.getAmount();
+            }
+        }
+        return itemCount >= amount;
     }
 }

@@ -1,4 +1,4 @@
-package kr.egsuv.minigames.games;
+package kr.egsuv.minigames.games.teamdeathmatch;
 
 import kr.egsuv.EGServerMain;
 import kr.egsuv.chat.Prefix;
@@ -7,9 +7,7 @@ import kr.egsuv.minigames.MinigameItems;
 import kr.egsuv.minigames.MinigameState;
 import kr.egsuv.minigames.TeamType;
 import net.kyori.adventure.text.Component;
-import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
-import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.entity.Player;
@@ -21,9 +19,7 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.scoreboard.*;
 
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
-import java.util.Random;
 
 public class TeamDeathmatchGame extends Minigame implements Listener {
 
@@ -85,6 +81,11 @@ public class TeamDeathmatchGame extends Minigame implements Listener {
         for (Player player : getPlayers()) {
             giveGameItems(player);
         }
+    }
+
+    @Override
+    protected boolean loadGameData() {
+        return false;
     }
 
     @Override

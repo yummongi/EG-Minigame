@@ -47,30 +47,34 @@ public class SpawnCommand implements Command {
         } else {
             player.setGameMode(GameMode.SURVIVAL);
             player.setAllowFlight(false);
-            player.setSneaking(false);
             player.setLevel(0);
             player.setExp(0);
             player.setWalkSpeed(0.2f);
             player.setFlySpeed(0.1f);
         }
 
-        player.closeInventory();
         player.setPlayerTime(3000, false);
         player.setGravity(true);
         player.setPlayerWeather(WeatherType.CLEAR);
         PotionUtils.applyPotionEffect(player, PotionEffectType.REGENERATION, 72000, 1);
 
-
-
-
+        player.setSneaking(false);
+        player.setPlayerWeather(WeatherType.CLEAR);
 
         // 무적 모드 해제
         player.setInvulnerable(false);
     }
 
     private void initPlayerInventory(Player player) {
+        player.closeInventory();
         PlayerInventory playerInventory = player.getInventory();
         playerInventory.clear();
+        playerInventory.clear(80);
+        playerInventory.clear(81);
+        playerInventory.clear(82);
+        playerInventory.clear(83);
+        playerInventory.setArmorContents(null);
+
         playerInventory.setHeldItemSlot(8);
         playerInventory.setItem(8, miniGamesGui.getMiniGameGuiItem());
     }

@@ -11,6 +11,7 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 public class MinigameConfig {
     private final EGServerMain plugin;
@@ -230,4 +231,39 @@ public class MinigameConfig {
     public List<Location> getRedTeamLocations(String mapName) {
         return getTeamLocations(mapName, "red");
     }
+
+
+    public void saveLocation(String category, String key, Location location) {
+        String path = category + "." + key;
+        config.set(path, locationToString(location));
+        saveConfig();
+    }
+
+    public Location loadLocation(String category, String key) {
+        String path = category + "." + key;
+        String locString = config.getString(path);
+        return locString != null ? stringToLocation(locString) : null;
+    }
+
+    public boolean loadGameData() {
+        loadConfig();
+        return true; // 기본적으로 true를 반환하고, 필요한 경우 오버라이드하여 사용
+    }
+
+    public void saveMapLocation(String mapName, String teamType, int teamNumber, Location location) {
+        String path = SPAWN_LOCATIONS + "." + mapName + "." + teamType + "." + teamNumber;
+        List<String> locations = config.getStringList(path);
+        locations.add(locationToString(location));
+        config.set(path, locations);
+        saveConfig();
+    }
+
+    public List<Location> loadMapLocations(String mapName, String teamType, int teamNumber) {
+        String path = SPAWN_LOCATIONS + "." + mapName + "." + teamType + "." + teamNumber;
+        List<String> locStrings = config.getStringList(path);
+        return locStrings.stream()
+                .map(this::stringToLocation)
+                .collect(Collectors.toList());
+    }
+
 }

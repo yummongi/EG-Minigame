@@ -1,11 +1,9 @@
-package kr.egsuv.minigames.games;
+package kr.egsuv.minigames.games.firsthit;
 
 import kr.egsuv.EGServerMain;
-import kr.egsuv.chat.Prefix;
 import kr.egsuv.minigames.Minigame;
 import kr.egsuv.minigames.MinigameItems;
 import kr.egsuv.minigames.MinigameState;
-import kr.egsuv.minigames.TeamType;
 import kr.egsuv.util.ItemUtils;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
@@ -24,11 +22,9 @@ import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
-import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.scoreboard.DisplaySlot;
 import org.bukkit.scoreboard.Objective;
-import org.bukkit.scoreboard.Score;
 import org.bukkit.scoreboard.Scoreboard;
 
 import java.time.Duration;
@@ -89,6 +85,11 @@ public class FirstHitGame extends Minigame implements Listener {
         setupScoreboard();
         updateScoreboard();
         startBuffTimer();
+    }
+
+    @Override
+    protected boolean loadGameData() {
+        return false;
     }
 
     private void startBuffTimer() {

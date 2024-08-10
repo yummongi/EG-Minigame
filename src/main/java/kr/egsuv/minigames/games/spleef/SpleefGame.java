@@ -1,10 +1,9 @@
-package kr.egsuv.minigames.games;
+package kr.egsuv.minigames.games.spleef;
 
 import kr.egsuv.EGServerMain;
 import kr.egsuv.minigames.Minigame;
 import kr.egsuv.minigames.MinigameItems;
 import kr.egsuv.minigames.MinigameState;
-import kr.egsuv.minigames.TeamType;
 import net.kyori.adventure.text.Component;
 import net.md_5.bungee.api.ChatMessageType;
 import net.md_5.bungee.api.chat.TextComponent;
@@ -78,6 +77,11 @@ public class SpleefGame extends Minigame implements Listener {
         setArenaProperties();
         startNextRound();
         updateScoreboard();
+    }
+
+    @Override
+    protected boolean loadGameData() {
+        return false;
     }
 
     @Override

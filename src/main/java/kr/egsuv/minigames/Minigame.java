@@ -22,6 +22,7 @@ import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Firework;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.inventory.meta.FireworkMeta;
 import org.bukkit.inventory.meta.LeatherArmorMeta;
 import org.bukkit.potion.PotionEffect;
@@ -76,9 +77,9 @@ public abstract class Minigame {
     protected MinigameConfig config;
 
     // 팀 관리
-    protected Map<Player, String> playerTeams = new HashMap<>();
     protected TeamType teamType;
     protected int numberOfTeams;
+    protected Map<Player, String> playerTeams = new HashMap<>();
     protected Map<String, List<Player>> teams;
 
     //팀 채팅
@@ -126,7 +127,7 @@ public abstract class Minigame {
 
 
 
-    // 개인전 생성자
+    // 개인전 생성자 또는 레드팀 블루팀
     public Minigame(EGServerMain plugin, MinigameItems minigameItems, String commandMainName, int MIN_PLAYER, int MAX_PLAYER, String displayGameName, boolean useBlockRestore) {
         this.plugin = plugin;
         this.COMMAND_MAIN_NAME = commandMainName;
@@ -411,9 +412,17 @@ public abstract class Minigame {
         playerData.getMinigameData(COMMAND_MAIN_NAME, false).addRank(rank);
         plugin.getDataManager().savePlayerData(player);
     }
+
     // 플레이어의 팀을 반환하는 메소드
-    protected String getPlayerTeam(Player player) {
+    public String getPlayerTeam(Player player) {
         return playerTeams.getOrDefault(player, "");
+    }
+
+    // 팀1, 팀2 등 입력하면 해당하는 플레이들을 반환
+    protected List<Player> getPlayersTeam(String teamName) {
+        return getPlayers().stream()
+                .filter(player -> getPlayerTeam(player).equals(teamName))
+                .collect(Collectors.toList());
     }
 
     // 플레이어를 팀에 할당하는 메소드
@@ -1369,7 +1378,7 @@ public abstract class Minigame {
     protected void startGameTimer() {
         timerBossBar = Bukkit.createBossBar(
                 "남은 시간: " + gameTimeLimit + "초",
-                BarColor.BLUE,
+                BarColor.GREEN,  // 초기 색상
                 BarStyle.SEGMENTED_10
         );
 
@@ -1393,14 +1402,21 @@ public abstract class Minigame {
                     return;
                 }
 
+                // 남은 시간에 따라 색상 변경
+                if (timeLeft > gameTimeLimit * 0.66) { // 남은 시간이 66% 이상일 때
+                    timerBossBar.setColor(BarColor.GREEN);
+                } else if (timeLeft > gameTimeLimit * 0.33) { // 남은 시간이 33% 이상 66% 이하일 때
+                    timerBossBar.setColor(BarColor.YELLOW);
+                } else { // 남은 시간이 33% 이하일 때
+                    timerBossBar.setColor(BarColor.RED);
+                }
+
                 timerBossBar.setTitle("남은 시간: " + timeLeft + "초");
-                timerBossBar.setProgress((float) timeLeft / gameTimeLimit);
+                timerBossBar.setProgress(Math.min(1.0f, (float) timeLeft / gameTimeLimit));
                 timeLeft--;
             }
         }.runTaskTimer(plugin, 0L, 20L);
     }
-
-
     public void handlePlayerDeath(Player player) {
         Location deathLocation = player.getLocation();
         killStreakManager.resetKillStreak(player);
@@ -1485,7 +1501,7 @@ public abstract class Minigame {
         }
     }
 
-    protected void broadcastTitle(String title, String subtitle, int fadeIn, int stay, int fadeOut) {
+    public void broadcastTitle(String title, String subtitle, int fadeIn, int stay, int fadeOut) {
         for (Player player : players) {
             player.sendTitle(title, subtitle, fadeIn, stay, fadeOut);
         }
@@ -1553,7 +1569,15 @@ public abstract class Minigame {
     }
 
     private void initializePlayerForGame(Player player) {
-        player.getInventory().clear();
+        PlayerInventory playerInventory = player.getInventory();
+        playerInventory.clear();
+        playerInventory.setArmorContents(null);
+
+        playerInventory.clear(80);
+        playerInventory.clear(81);
+        playerInventory.clear(82);
+        playerInventory.clear(83);
+
         player.setHealth(player.getAttribute(Attribute.GENERIC_MAX_HEALTH).getValue());
         player.setFoodLevel(20);
         player.setExp(0);
@@ -1854,6 +1878,8 @@ public abstract class Minigame {
 
     protected abstract void onGameStart();
 
+    protected abstract boolean loadGameData();
+
     protected abstract void onGameEnd();
     // Minigame클래스의 gameRestoration() -> startNextRound() -> resumeGame() 실행
     protected abstract void resumeGame();
@@ -1875,7 +1901,8 @@ public abstract class Minigame {
     public BossBar getLobbyBossBar() { return lobbyBossBar; }
     public int getGameTimeLimit() { return gameTimeLimit; }
     public Set<UUID> getDisconnectedPlayers() { return disconnectedPlayers; }
-
+    public MinigameItems getMinigameItems() { return minigameItems; }
+    public EGServerMain getPlugin() { return plugin; }
 
     public TeamType getTeamType() { return teamType; }
 
@@ -1933,4 +1960,59 @@ public abstract class Minigame {
     public void setBlockRestoreManager(BlockRestoreManager manager) {
         this.blockRestoreManager = manager;
     }
+
+    public boolean takeItem(Player player, Material material, int amount) {
+        return minigameItems.takeItem(player, material, amount);
+    }
+
+    public boolean hasItem(Player player, Material material, int amount) {
+        return minigameItems.hasItem(player, material, amount);
+    }
+
+    public void removeItem(Player player, Material material, int amount) {
+        minigameItems.removeItem(player, material, amount);
+    }
+
+    public int countItem(Player player, Material material) {
+        return minigameItems.countItem(player, material);
+    }
+
+    public List<Player> stringListToPlayer(List<String> playerNames) {
+        List<Player> players = new ArrayList<>();
+        for (String name : playerNames) {
+            Player player = Bukkit.getPlayer(name);
+            if (player != null && player.isOnline()) {
+                players.add(player);
+            }
+        }
+        return players;
+    }
+
+    // 적군 리스트를 가져오는 메소드
+    public List<Player> getEnemyList(String playerTeam) {
+        List<Player> enemies = new ArrayList<>();
+        for (Map.Entry<String, List<Player>> entry : teams.entrySet()) {
+            // 자신의 팀이 아닌 팀을 찾습니다.
+            if (!entry.getKey().equals(playerTeam)) {
+                enemies.addAll(entry.getValue());
+            }
+        }
+        return enemies;
+    }
+
+    // 특정 팀의 모든 멤버를 가져오는 메소드 : 팀1, 팀2 .. 의 멤버 등
+    public List<Player> getTeamMembers(String team) {
+        return teams.getOrDefault(team, new ArrayList<>());
+    }
+
+    // 플레이어가 속한 팀의 팀원(자신 제외)을 가져오는 메소드
+    public List<Player> getTeammates(Player player) {
+        String playerTeam = getPlayerTeam(player);
+        List<Player> teammates = new ArrayList<>(getTeamMembers(playerTeam));
+        teammates.remove(player);  // 자신을 제외
+        return teammates;
+    }
+
+
+
 }

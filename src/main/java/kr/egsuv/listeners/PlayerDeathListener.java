@@ -2,7 +2,7 @@ package kr.egsuv.listeners;
 
 import kr.egsuv.EGServerMain;
 import kr.egsuv.minigames.Minigame;
-import kr.egsuv.minigames.games.SpleefGame;
+import kr.egsuv.minigames.games.spleef.SpleefGame;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.title.Title;

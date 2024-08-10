@@ -4,7 +4,7 @@ public enum TeamType {
     SOLO(1),
     DUO(1),
     TRIPLE(3),
-    SQUAD(4);
+    SQUAD(1);
 
 
     private final int playersPerTeam;
@@ -14,6 +14,10 @@ public enum TeamType {
     }
 
     public int getPlayersPerTeam() {
+        return playersPerTeam;
+    }
+
+    public int setPlayersPerTeam() {
         return playersPerTeam;
     }
 }

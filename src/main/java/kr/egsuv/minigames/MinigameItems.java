@@ -5,6 +5,7 @@ import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.meta.PotionMeta;
 import org.bukkit.potion.PotionEffect;
@@ -70,5 +71,50 @@ public class MinigameItems {
         items.add(createSpeedPotion());
         // 더 많은 아이템 추가 가능
         return items;
+    }
+
+    public boolean takeItem(Player player, Material material, int amount) {
+        if (player.getInventory().containsAtLeast(new ItemStack(material), amount)) {
+            player.getInventory().removeItem(new ItemStack(material, amount));
+            return true;
+        }
+        return false;
+    }
+
+    public boolean hasItem(Player player, Material material, int amount) {
+        int itemCount = 0;
+        for (ItemStack item : player.getInventory().getContents()) {
+            if (item != null && item.getType() == material) {
+                itemCount += item.getAmount();
+            }
+        }
+        return itemCount >= amount;
+    }
+
+    public int countItem(Player player, Material material) {
+        PlayerInventory inventory = player.getInventory();
+        int count = 0;
+        for (ItemStack item : inventory.getContents()) {
+            if (item != null && item.getType() == material) {
+                count += item.getAmount();
+            }
+        }
+        return count;
+    }
+
+
+    public void removeItem(Player player, Material material, int amount) {
+        PlayerInventory inventory = player.getInventory();
+        for (ItemStack item : inventory.getContents()) {
+            if (item != null && item.getType() == material) {
+                if (item.getAmount() > amount) {
+                    item.setAmount(item.getAmount() - amount);
+                    break;
+                } else {
+                    amount -= item.getAmount();
+                    inventory.remove(item);
+                }
+            }
+        }
     }
 }
