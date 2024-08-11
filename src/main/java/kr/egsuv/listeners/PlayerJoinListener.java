@@ -48,7 +48,7 @@ public class PlayerJoinListener implements Listener {
             if ("로비".equals(playerLocation)) {
                 player.showTitle(Title.title(
                         Component.text("§6§lENDLESS").color(NamedTextColor.GOLD),
-                        Component.text("§e§lMINIGAME").color(NamedTextColor.YELLOW),
+                        Component.text("§e§l클로즈 베타 서버").color(NamedTextColor.YELLOW),
                         Title.Times.times(Duration.ofMillis(500), Duration.ofMillis(1400), Duration.ofMillis(500))
                 ));
 

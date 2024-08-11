@@ -131,6 +131,7 @@ public class CustomGUIListener implements Listener {
             if (currentGame.isTeamGame()) {
                 lore.add(Component.text("승리: " + gameData.getWins()).color(NamedTextColor.GREEN));
                 lore.add(Component.text("패배: " + gameData.getLosses()).color(NamedTextColor.RED));
+                lore.add(Component.text("무승부: " + gameData.getDraws()).color(NamedTextColor.GRAY));
                 double winRate = gameData.getTotalGames() > 0 ? (double) gameData.getWins() / gameData.getTotalGames() * 100 : 0;
                 lore.add(Component.text("승률: " + String.format("%.2f%%", winRate)).color(NamedTextColor.YELLOW));
             } else {
@@ -196,10 +197,12 @@ public class CustomGUIListener implements Listener {
 
     private String getStateString(MinigameState state) {
         switch (state) {
-            case WAITING: return "대기중";
-            case STARTING: return "시작 중";
-            case IN_PROGRESS: return "진행중";
-            case ENDING: return "종료 중";
+            case WAITING: return "§a대기중";
+            case STARTING: return "§a시작중";
+            case IN_PROGRESS: return "§c진행중";
+            case ENDING: return "§c종료 중";
+            case DISABLED:
+                return "§c점검중";
             default: return "알 수 없음";
         }
     }
@@ -255,6 +258,7 @@ public class CustomGUIListener implements Listener {
         if (game.isTeamGame()) {
             viewer.sendMessage(Prefix.SERVER + "승리: " + gameData.getWins());
             viewer.sendMessage(Prefix.SERVER + "패배: " + gameData.getLosses());
+            viewer.sendMessage(Prefix.SERVER + "무승부: " + gameData.getDraws());
             double winRate = gameData.getTotalGames() > 0 ? (double) gameData.getWins() / gameData.getTotalGames() * 100 : 0;
             viewer.sendMessage(Prefix.SERVER + "승률: " + String.format("%.2f%%", winRate));
         } else {
@@ -290,8 +294,6 @@ public class CustomGUIListener implements Listener {
             }
         }
     }
-
-
 
 
     private boolean hasCustomName(ItemStack item, String name) {
@@ -373,9 +375,11 @@ public class CustomGUIListener implements Listener {
             if (data.isTeamGame()) {
                 int wins = data.getWins();
                 int losses = data.getLosses();
+                int draws = data.getDraws();
                 double winRate = data.getWinRate() * 100;
                 lore.add(Component.text("승리: ", NamedTextColor.YELLOW).append(Component.text(wins, NamedTextColor.GREEN)));
                 lore.add(Component.text("패배: ", NamedTextColor.YELLOW).append(Component.text(losses, NamedTextColor.RED)));
+                lore.add(Component.text("무승부: ", NamedTextColor.YELLOW).append(Component.text(draws, NamedTextColor.GRAY)));
                 lore.add(Component.text("승률: ", NamedTextColor.YELLOW).append(Component.text(String.format("%.2f%%", winRate), NamedTextColor.AQUA)));
             } else {
                 for (int i = 1; i <= 10; i++) {

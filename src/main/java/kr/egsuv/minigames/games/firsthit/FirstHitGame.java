@@ -260,8 +260,6 @@ public class FirstHitGame extends Minigame implements Listener {
 
             int newScore = scores.getOrDefault(damager, 0) + scoreToAdd;
             scores.put(damager, newScore);
-            addKill(damager);
-            addDeath(damaged);
 
             updateScoreboard();
 

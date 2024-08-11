@@ -5,13 +5,17 @@ import kr.egsuv.config.MinigameConfig;
 import kr.egsuv.minigames.Minigame;
 import kr.egsuv.minigames.MinigameState;
 import kr.egsuv.minigames.TeamType;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.*;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.Fireball;
+import org.bukkit.entity.Item;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -20,10 +24,12 @@ import org.bukkit.event.entity.EntityExplodeEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
+import org.bukkit.util.BoundingBox;
 
 import java.io.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Level;
 import java.util.stream.Collectors;
@@ -42,6 +48,10 @@ public class BlockRestoreManager implements Listener {
 
     private final Map<String, Map<String, Location>> gameMapCenters = new ConcurrentHashMap<>();
 
+    private static final Set<Material> LIQUID_MATERIALS = EnumSet.of(
+            Material.WATER, Material.LAVA
+    );
+
     // 폴더 및 파일 관리
     private final File blockRestoreFolder;
     private final File configFile;
@@ -51,6 +61,9 @@ public class BlockRestoreManager implements Listener {
 
     // 초기 저장된 맵
     private final Map<String, Map<String, Map<SerializableLocation, SerializableBlockState>>> initialBlockStates = new ConcurrentHashMap<>();
+
+    private final AtomicInteger totalBlocksToRestore = new AtomicInteger(0);
+    private final AtomicInteger blocksRestored = new AtomicInteger(0);
 
 
 
@@ -108,6 +121,8 @@ public class BlockRestoreManager implements Listener {
         }
     }
 
+
+
     public void logBlockChange(Block block, boolean isPlaced, String gameName, String mapName) {
         if (!isInRestoreRegion(gameName, mapName, block.getLocation())) {
             return;
@@ -156,77 +171,183 @@ public class BlockRestoreManager implements Listener {
                     .getOrDefault(minigame.getCOMMAND_MAIN_NAME(), Collections.emptyMap())
                     .getOrDefault(mapName, Collections.emptyMap());
 
-            plugin.getLogger().info("복구 시작: " + mapName + ", 청크 수: " + chunkChanges.size());
+            CuboidRegion region = gameMapRegions.getOrDefault(minigame.getCOMMAND_MAIN_NAME(), Collections.emptyMap()).get(mapName);
+            if (region == null) {
+                plugin.getLogger().warning("맵 '" + mapName + "'의 영역 정보를 찾을 수 없습니다.");
+                minigame.onRestorationComplete();
+                return;
+            }
+
+            World world = Bukkit.getWorld(region.getWorld());
+            if (world == null) {
+                plugin.getLogger().warning("월드 '" + region.getWorld() + "'를 찾을 수 없습니다.");
+                minigame.onRestorationComplete();
+                return;
+            }
+
+            // 드롭된 아이템 제거
+            removeDroppedItems(world, region);
+
+            Set<ChunkPosition> affectedChunks = getAffectedChunks(region);
+
+            plugin.getLogger().info("복구 시작: " + mapName + ", 영향 받은 청크 수: " + affectedChunks.size());
 
             restorationTask = new BukkitRunnable() {
-                Iterator<Map.Entry<ChunkPosition, Set<BlockChangeRecord>>> chunkIterator = new ArrayList<>(chunkChanges.entrySet()).iterator();
+                Iterator<ChunkPosition> chunkIterator = affectedChunks.iterator();
                 boolean initialRestoreComplete = false;
                 boolean needFullRestore = false;
 
                 @Override
                 public void run() {
-                    if (!initialRestoreComplete) {
-                        restoreRecordedChanges(minigame.getCOMMAND_MAIN_NAME(), mapName);
-                    } else if (needFullRestore) {
-                        restoreFromInitialState(minigame.getCOMMAND_MAIN_NAME(), mapName);
-                    } else {
-                        finishRestoration(minigame, mapName);
-                        return;
-                    }
-                }
-
-                private void restoreRecordedChanges(String gameName, String mapName) {
                     long startTime = System.currentTimeMillis();
-                    int blocksRestored = 0;
+                    int chunksProcessed = 0;
 
-                    while (chunkIterator.hasNext() && blocksRestored < blocksPerTick && System.currentTimeMillis() - startTime < 50) {
-                        Map.Entry<ChunkPosition, Set<BlockChangeRecord>> entry = chunkIterator.next();
-                        for (BlockChangeRecord change : entry.getValue()) {
-                            change.restore(plugin);
-                            blocksRestored++;
+                    while (chunkIterator.hasNext() && System.currentTimeMillis() - startTime < 45) {
+                        ChunkPosition chunkPos = chunkIterator.next();
+                        if (!initialRestoreComplete) {
+                            restoreChunkFromChanges(chunkPos, chunkChanges.get(chunkPos));
                         }
+                        if (needFullRestore || !initialRestoreComplete) {
+                            restoreChunkFromInitialState(world, chunkPos, initialStates);
+                        }
+                        removeLiquidsInChunk(world, chunkPos, region, initialStates);
+                        chunksProcessed++;
                     }
 
                     if (!chunkIterator.hasNext()) {
-                        initialRestoreComplete = true;
-                        needFullRestore = !compareWithInitialState(gameName, mapName);
-                        chunkIterator = new ArrayList<>(chunkChanges.entrySet()).iterator(); // Reset iterator for potential full restore
-                    }
-
-                    plugin.getLogger().info("기록된 변경사항 복구 중: " + blocksRestored + "개 블록 복구됨");
-                }
-
-                private void restoreFromInitialState(String gameName, String mapName) {
-                    long startTime = System.currentTimeMillis();
-                    int blocksRestored = 0;
-
-                    Map<SerializableLocation, SerializableBlockState> initialStates = initialBlockStates
-                            .getOrDefault(gameName, Collections.emptyMap())
-                            .getOrDefault(mapName, Collections.emptyMap());
-
-                    Iterator<Map.Entry<SerializableLocation, SerializableBlockState>> stateIterator = initialStates.entrySet().iterator();
-                    while (stateIterator.hasNext() && blocksRestored < blocksPerTick && System.currentTimeMillis() - startTime < 50) {
-                        Map.Entry<SerializableLocation, SerializableBlockState> entry = stateIterator.next();
-                        Location loc = entry.getKey().toBukkitLocation();
-                        SerializableBlockState initialState = entry.getValue();
-                        Block currentBlock = loc.getBlock();
-                        if (!initialState.equals(new SerializableBlockState(currentBlock.getState()))) {
-                            initialState.applyTo(currentBlock);
-                            blocksRestored++;
+                        if (!initialRestoreComplete) {
+                            initialRestoreComplete = true;
+                            needFullRestore = !compareWithInitialState(minigame.getCOMMAND_MAIN_NAME(), mapName);
+                            if (needFullRestore) {
+                                plugin.getLogger().info("초기 상태와 불일치 발견. 전체 복구를 시작합니다.");
+                                chunkIterator = affectedChunks.iterator();
+                            } else {
+                                finishRestoration(minigame, mapName);
+                                this.cancel();
+                            }
+                        } else {
+                            finishRestoration(minigame, mapName);
+                            this.cancel();
                         }
                     }
 
-                    if (!stateIterator.hasNext()) {
-                        finishRestoration(minigame, mapName);
-                        return;
-                    }
-
-                    plugin.getLogger().info("초기 상태로 완전 복구 중: " + blocksRestored + "개 블록 복구됨");
+                    plugin.getLogger().info("복구 진행 중: " + chunksProcessed + " 청크 처리됨");
                 }
             }.runTaskTimer(plugin, 0L, 1L);
         } finally {
             restoreLock.unlock();
         }
+    }
+
+    private void removeDroppedItems(World world, CuboidRegion region) {
+        BoundingBox boundingBox = BoundingBox.of(
+                new Location(world, region.getMinX(), region.getMinY(), region.getMinZ()),
+                new Location(world, region.getMaxX(), region.getMaxY(), region.getMaxZ())
+        );
+
+        world.getEntitiesByClass(Item.class).stream()
+                .filter(item -> boundingBox.contains(item.getLocation().toVector()))
+                .forEach(Entity::remove);
+
+        plugin.getLogger().info("드롭된 아이템 제거 완료: " + region.getWorld());
+    }
+
+    private void restoreChunkFromChanges(ChunkPosition chunkPos, Set<BlockChangeRecord> changes) {
+        if (changes == null) return;
+        for (BlockChangeRecord change : changes) {
+            change.restore(plugin);
+        }
+    }
+
+    private void restoreChunkFromInitialState(World world, ChunkPosition chunkPos, Map<SerializableLocation, SerializableBlockState> initialStates) {
+        int minX = chunkPos.x << 4;
+        int minZ = chunkPos.z << 4;
+        for (int x = minX; x < minX + 16; x++) {
+            for (int z = minZ; z < minZ + 16; z++) {
+                for (int y = world.getMinHeight(); y < world.getMaxHeight(); y++) {
+                    SerializableLocation loc = new SerializableLocation(world.getName(), x, y, z);
+                    SerializableBlockState state = initialStates.get(loc);
+                    if (state != null) {
+                        Block block = world.getBlockAt(x, y, z);
+                        if (!state.equals(new SerializableBlockState(block.getState()))) {
+                            state.applyTo(block);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    private Set<ChunkPosition> getAffectedChunks(CuboidRegion region) {
+        Set<ChunkPosition> chunks = new HashSet<>();
+        for (int x = region.getMinX() >> 4; x <= region.getMaxX() >> 4; x++) {
+            for (int z = region.getMinZ() >> 4; z <= region.getMaxZ() >> 4; z++) {
+                chunks.add(new ChunkPosition(x, z));
+            }
+        }
+        return chunks;
+    }
+
+
+    private void removeLiquidsInChunk(World world, ChunkPosition chunkPos, CuboidRegion region, Map<SerializableLocation, SerializableBlockState> initialStates) {
+        int minX = Math.max(chunkPos.x << 4, region.getMinX());
+        int maxX = Math.min((chunkPos.x << 4) + 15, region.getMaxX());
+        int minZ = Math.max(chunkPos.z << 4, region.getMinZ());
+        int maxZ = Math.min((chunkPos.z << 4) + 15, region.getMaxZ());
+        for (int x = minX; x <= maxX; x++) {
+            for (int z = minZ; z <= maxZ; z++) {
+                for (int y = region.getMinY(); y <= region.getMaxY(); y++) {
+                    Block block = world.getBlockAt(x, y, z);
+                    SerializableLocation loc = new SerializableLocation(world.getName(), x, y, z);
+                    SerializableBlockState initialState = initialStates.get(loc);
+
+                    if (LIQUID_MATERIALS.contains(block.getType())) {
+                        if (initialState == null || !LIQUID_MATERIALS.contains(Material.valueOf(initialState.materialName))) {
+                            // 초기 상태에 없던 액체만 제거
+                            block.setType(Material.AIR, false);
+                        } else {
+                            // 초기 상태에 있던 액체는 원래 상태로 복원
+                            initialState.applyTo(block);
+                        }
+                    } else if (initialState != null && LIQUID_MATERIALS.contains(Material.valueOf(initialState.materialName))) {
+                        // 초기 상태에는 액체였지만 현재 액체가 아닌 경우 복원
+                        initialState.applyTo(block);
+                    }
+                }
+            }
+        }
+    }
+
+    private void restoreLiquidBlocks(Map<SerializableLocation, SerializableBlockState> initialStates) {
+        for (Map.Entry<SerializableLocation, SerializableBlockState> entry : initialStates.entrySet()) {
+            SerializableBlockState state = entry.getValue();
+            if (state.materialName.equals("WATER") || state.materialName.equals("LAVA")) {
+                Location loc = entry.getKey().toBukkitLocation();
+                Block block = loc.getBlock();
+                state.applyTo(block);
+                blocksRestored.incrementAndGet();
+            }
+        }
+    }
+
+    private void restoreChunk(Set<BlockChangeRecord> changes) {
+        for (BlockChangeRecord change : changes) {
+            change.restore(plugin);
+        }
+    }
+
+    private void restoreBlock(Map.Entry<SerializableLocation, SerializableBlockState> entry) {
+        Location loc = entry.getKey().toBukkitLocation();
+        SerializableBlockState initialState = entry.getValue();
+        Block currentBlock = loc.getBlock();
+
+        if (!initialState.equals(new SerializableBlockState(currentBlock.getState())) &&
+                !initialState.materialName.equals("AIR")) {
+            initialState.applyTo(currentBlock);
+        }
+    }
+
+    private int getTotalChangedBlocks(Map<ChunkPosition, Set<BlockChangeRecord>> chunkChanges) {
+        return chunkChanges.values().stream().mapToInt(Set::size).sum();
     }
 
     private Map<Location, BlockState> loadInitialStatesForMap(String gameName, String mapName) {
@@ -265,13 +386,22 @@ public class BlockRestoreManager implements Listener {
             restorationTask.cancel();
             restorationTask = null;
         }
-        worldChanges.remove(mapName);
+        if (worldChanges.containsKey(mapName)) {
+            worldChanges.remove(mapName);
+        }
         saveRestoreData();
-        plugin.getLogger().info("맵 '" + mapName + "' 복구 완료");
+        plugin.getLogger().info("맵 '" + mapName + "' 복구 완료. 총 " + blocksRestored.get() + "/" + totalBlocksToRestore.get() + " 블록 복구됨");
+
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            player.sendMessage(Component.text("맵 '" + mapName + "' 복구가 완료되었습니다.").color(NamedTextColor.GREEN));
+        }
 
         if (minigame.getState() == MinigameState.IN_PROGRESS) {
             minigame.onRestorationComplete();
         }
+
+        totalBlocksToRestore.set(0);
+        blocksRestored.set(0);
     }
 
     public void cancelRestoration() {
@@ -349,12 +479,28 @@ public class BlockRestoreManager implements Listener {
 
         return new Location(pos1.getWorld(), centerX, maxY, centerZ);
     }
-    private boolean isInRestoreRegion(String gameName, String mapName, Location location) {
+
+    public boolean isInRestoreRegion(String gameName, String mapName, Location location) {
+        if (gameName == null || mapName == null || location == null) {
+            plugin.getLogger().warning("isInRestoreRegion called with null parameter: gameName=" + gameName + ", mapName=" + mapName + ", location=" + location);
+            return false;
+        }
+
         Map<String, CuboidRegion> mapRegions = gameMapRegions.get(gameName);
-        if (mapRegions == null) return false;
+        if (mapRegions == null) {
+            plugin.getLogger().warning("No map regions found for game: " + gameName);
+            return false;
+        }
+
         CuboidRegion region = mapRegions.get(mapName);
-        return region != null && region.contains(location);
+        if (region == null) {
+            plugin.getLogger().warning("No region found for map: " + mapName + " in game: " + gameName);
+            return false;
+        }
+
+        return region.contains(location);
     }
+
 
     private void saveChunkChanges(String mapName, ChunkPosition chunkPos) {
         Set<BlockChangeRecord> changes = worldChanges.get(mapName).get(chunkPos);
@@ -415,7 +561,7 @@ public class BlockRestoreManager implements Listener {
         try {
             config.save(dataFile);
             plugin.getLogger().info("복구 데이터 저장 완료: " + dataFile.getAbsolutePath());
-            plugin.getLogger().info("저장된 데이터: " + config.saveToString());
+            //plugin.getLogger().info("저장된 데이터: " + config.saveToString());
         } catch (IOException e) {
             plugin.getLogger().log(Level.SEVERE, "복구 데이터 저장 중 오류 발생", e);
         }

@@ -7,6 +7,7 @@ public class MinigameData {
     private boolean isTeamGame;
     private int wins;
     private int losses;
+    private int draws; // 무승부 횟수
     private Map<Integer, Integer> rankCounts; // 순위별 횟수 (개인전용)
     private int totalGames;
     private long lastPlayTime;
@@ -16,6 +17,7 @@ public class MinigameData {
         this.isTeamGame = isTeamGame;
         this.wins = 0;
         this.losses = 0;
+        this.draws = 0; // 무승부 초기화
         this.rankCounts = new HashMap<>();
         for (int i = 1; i <= 10; i++) {
             rankCounts.put(i, 0);
@@ -36,6 +38,13 @@ public class MinigameData {
             losses++;
         }
     }
+
+    public void addDraw() {
+        if (isTeamGame) {
+            draws++;
+        }
+    }
+
 
     public void addTeamWin(String teamName) {
         teamStats.put(teamName, teamStats.getOrDefault(teamName, 0) + 1);
@@ -59,12 +68,16 @@ public class MinigameData {
         return losses;
     }
 
+    public int getDraws() {
+        return draws;
+    }
+
     public int getRankCount(int rank) {
         return rankCounts.getOrDefault(rank, 0);
     }
 
     public double getWinRate() {
-        int totalGames = wins + losses;
+        int totalGames = wins + losses + draws; // 무승부도 포함
         return totalGames > 0 ? (double) wins / totalGames : 0;
     }
 

@@ -6,6 +6,9 @@ import kr.egsuv.commands.Command;
 import kr.egsuv.minigames.Minigame;
 import kr.egsuv.minigames.MinigameGui;
 import kr.egsuv.util.PotionUtils;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.title.Title;
+import net.md_5.bungee.api.ChatMessageType;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.WeatherType;
@@ -36,6 +39,9 @@ public class SpawnCommand implements Command {
     }
 
     private void initPlayerState(Player player) {
+        // ActionBar, Title 초기화
+        player.sendActionBar(Component.empty());
+
         // 활성화된 모든 포션 효과를 가져옵니다.
         for (PotionEffect effect : player.getActivePotionEffects()) {
             // 각 포션 효과를 제거합니다.
@@ -69,10 +75,6 @@ public class SpawnCommand implements Command {
         player.closeInventory();
         PlayerInventory playerInventory = player.getInventory();
         playerInventory.clear();
-        playerInventory.clear(80);
-        playerInventory.clear(81);
-        playerInventory.clear(82);
-        playerInventory.clear(83);
         playerInventory.setArmorContents(null);
 
         playerInventory.setHeldItemSlot(8);

@@ -740,23 +740,30 @@ public class SpleefGame extends Minigame implements Listener {
             return;
         }
 
+
         event.setCancelled(true);
+
         String message = event.getMessage();
         if (message.startsWith("!")) {
             // 전체 채팅
-            broadcastToPlayers(Component.text("§7[전체] §f" + player.getName() + ": " + message.substring(1)));
+            broadcastToPlayers(Component.text("§a[전체] §f" + player.getName() + ": " + message.substring(1)));
         } else {
-            // 팀 채팅 (관전자끼리)
-            if (!alivePlayers.contains(player)) {
-                for (Player p : getPlayers()) {
-                    if (!alivePlayers.contains(p)) {
-                        p.sendMessage("§8[관전] §7" + player.getName() + ": " + message);
-                    }
+            // 팀 채팅
+            handleTeamChat(player, message);
+        }
+    }
+
+    private void handleTeamChat(Player player, String message) {
+        if (!alivePlayers.contains(player)) {
+            // 관전자끼리 채팅
+            for (Player p : getPlayers()) {
+                if (!alivePlayers.contains(p)) {
+                    p.sendMessage("§8[관전] §7" + player.getName() + ": " + message);
                 }
-            } else {
-                // 생존자는 전체 채팅만 가능
-                player.sendMessage("§c생존 중에는 전체 채팅만 가능합니다. 메시지 앞에 !를 붙여주세요.");
             }
+        } else {
+            // 생존자는 전체 채팅만 가능
+            player.sendMessage("§c생존 중에는 전체 채팅만 가능합니다. 메시지 앞에 !를 붙여주세요.");
         }
     }
 }

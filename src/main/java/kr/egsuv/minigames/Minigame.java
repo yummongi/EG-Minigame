@@ -6,6 +6,7 @@ import kr.egsuv.config.MinigameConfig;
 import kr.egsuv.data.BlockRestoreManager;
 import kr.egsuv.data.MinigameData;
 import kr.egsuv.data.PlayerData;
+import kr.egsuv.minigames.gui.MapSelectionGUI;
 import kr.egsuv.ranking.KillStreakManager;
 import kr.egsuv.util.ItemUtils;
 import net.kyori.adventure.text.Component;
@@ -21,6 +22,11 @@ import org.bukkit.boss.BarStyle;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Firework;
 import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
+import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.inventory.meta.FireworkMeta;
@@ -124,6 +130,8 @@ public abstract class Minigame {
 
     public boolean isRedBlueTeamGame;
 
+    // 무적 체크
+    private Map<Player, Long> invulnerablePlayers = new HashMap<>();
 
 
 
@@ -215,12 +223,14 @@ public abstract class Minigame {
         this.itemDropAllowed = itemDropAllowed;
         this.itemPickupAllowed = itemPickupAllowed;
         this.itemMoveAllowed = itemMoveAllowed;
+
+
     }
 
     // 팀 할당 및 스코어보드 설정을 위한 공통 메서드
     protected void setupTeamsAndScoreboard() {
         scoreboard = Bukkit.getScoreboardManager().getNewScoreboard();
-        objective = scoreboard.registerNewObjective("game", "dummy", Component.text(getDisplayGameName(), NamedTextColor.GOLD));
+        Objective objective = scoreboard.registerNewObjective("game", "dummy", ChatColor.GOLD + getDisplayGameName());
         objective.setDisplaySlot(DisplaySlot.SIDEBAR);
 
         if (isTeamGame) {
@@ -376,24 +386,58 @@ public abstract class Minigame {
     }
 
     private void recordTeamGameResult(List<Map.Entry<Player, Integer>> sortedScores) {
-        // 팀전 결과 기록 (예: 1등 팀은 승리, 나머지는 패배)
-        for (int i = 0; i < sortedScores.size(); i++) {
-            Player player = sortedScores.get(i).getKey();
-            if (i == 0) {
-                recordWin(player);
-            } else {
-                recordLoss(player);
+        // 무승부 체크 로직 추가
+        if (isDrawCondition()) {
+            for (Player player : players) {
+                recordDraw(player);
+            }
+        } else {
+            // 팀전 결과 기록 (예: 1등 팀은 승리, 나머지는 패배)
+            for (int i = 0; i < sortedScores.size(); i++) {
+                Player player = sortedScores.get(i).getKey();
+                if (i == 0) {
+                    recordWin(player);
+                } else {
+                    recordLoss(player);
+                }
+            }
+        }
+    }
+    private void recordIndividualGameResult(List<Map.Entry<Player, Integer>> sortedScores) {
+        // 무승부 체크 로직 추가 (예: 상위 n명이 동일한 점수일 때 무승부 처리)
+        if (isDrawCondition()) {
+            for (Player player : players) {
+                recordDraw(player);
+            }
+        } else {
+            // 개인전 결과 기록 (1-10등까지 기록)
+            for (int i = 0; i < Math.min(10, sortedScores.size()); i++) {
+                Player player = sortedScores.get(i).getKey();
+                recordRank(player, i + 1);
             }
         }
     }
 
-    private void recordIndividualGameResult(List<Map.Entry<Player, Integer>> sortedScores) {
-        // 개인전 결과 기록 (1-10등까지 기록)
-        for (int i = 0; i < Math.min(10, sortedScores.size()); i++) {
-            Player player = sortedScores.get(i).getKey();
-            recordRank(player, i + 1);
+    // 무승부 조건 체크 (동일한 점수인 경우)
+    private boolean isDrawCondition() {
+        if (scores.isEmpty()) {
+            return false;
         }
+
+        // 플레이어의 점수를 모두 확인
+        Set<Integer> uniqueScores = new HashSet<>(scores.values());
+
+        // 점수가 하나만 존재하면 모두 동일한 점수를 가짐 (무승부)
+        return uniqueScores.size() == 1;
     }
+
+    // 무승부 발생 시 호출되는 메서드
+    protected void recordDraw(Player player) {
+        PlayerData playerData = plugin.getDataManager().getPlayerData(player);
+        playerData.getMinigameData(COMMAND_MAIN_NAME, isTeamGame).addDraw(); // 무승부 기록
+        plugin.getDataManager().savePlayerData(player);
+    }
+
 
     protected void recordWin(Player player) {
         PlayerData playerData = plugin.getDataManager().getPlayerData(player);
@@ -428,7 +472,12 @@ public abstract class Minigame {
     // 플레이어를 팀에 할당하는 메소드
     protected void assignPlayerToTeam(Player player, String team) {
         if (player != null && team != null) {
+            String oldTeam = playerTeams.get(player);
+            if (oldTeam != null) {
+                teams.get(oldTeam).remove(player);
+            }
             playerTeams.put(player, team);
+            teams.get(team).add(player);
             NamedTextColor teamColor = TEAM_COLORS.getOrDefault(team, NamedTextColor.WHITE);
             player.playerListName(Component.text(player.getName(), teamColor));
             player.displayName(Component.text(player.getName()).color(teamColor));
@@ -523,7 +572,7 @@ public abstract class Minigame {
             return;
         }
 
-        String teamToJoin = findTeamToJoin();
+        String teamToJoin = findTeamToJoin(); //팀1, 팀2 반환
         if (teamToJoin == null) {
             player.sendMessage(Prefix.SERVER + "§r현재 참여 가능한 " + (isTeamGame ? "§r팀 자리" : "§r슬롯") + "가 없습니다. 잠시 후 다시 시도해주세요.");
             return;
@@ -533,6 +582,7 @@ public abstract class Minigame {
         setPlayerListLocation(player, "게임로비");
 
         teams.get(teamToJoin).add(player);
+        playerTeams.put(player, teamToJoin);  // playerTeams에 플레이어 추가
         current_player++;
         players.add(player);
         assignPlayerToTeam(player, teamToJoin);
@@ -554,6 +604,8 @@ public abstract class Minigame {
         } else {
             sendTeamBalanceInfo(player);
         }
+        // 디버그 메시지 추가 (서버 콘솔에 출력)
+        plugin.getLogger().info("Player " + player.getName() + " joined team " + teamToJoin + ". Current players: " + current_player);
     }
 
     protected void startCountdown() {
@@ -571,6 +623,7 @@ public abstract class Minigame {
             if (!unsetMaps.isEmpty()) {
                 broadcastToPlayers(Component.text(Prefix.SERVER + "§r다음 맵의 복구 영역이 설정되지 않았습니다: " + String.join(", ", unsetMaps)));
                 broadcastToPlayers(Component.text(Prefix.SERVER + "게임을 시작할 수 없습니다. 관리자에게 반드시 문의하세요."));
+
                 return;
             }
         }
@@ -812,6 +865,10 @@ public abstract class Minigame {
 
         // 게임 시작 로그
         plugin.getLogger().info(DISPLAY_GAME_NAME + " 게임이 시작되었습니다. 맵: " + currentMap);
+
+        if (useBlockRestore && (blockBreakAllowed || blockPlaceAllowed)) {
+            plugin.getServer().getPluginManager().registerEvents(new BlockModificationListener(), plugin);
+        }
     }
 
     private void cancelGame(String reason) {
@@ -1121,6 +1178,8 @@ public abstract class Minigame {
                     lobbyBossBar.addPlayer(player);
                 }
             }
+            // 디버그 메시지 추가
+            plugin.getLogger().info("Lobby BossBar updated. Players: " + current_player + "/" + MIN_PLAYER);
         } else if (lobbyBossBar != null) {
             lobbyBossBar.removeAll();
             lobbyBossBar = null;
@@ -1160,18 +1219,20 @@ public abstract class Minigame {
         }
 
         if (!sortedScores.isEmpty()) {
-            Player winner = sortedScores.get(0).getKey();
-            broadcastTitle("§6" + winner.getName(), "§e1위 축하합니다!", 10, 70, 20);
+            // 개인전이라면,
+            if(teamType == TeamType.SOLO) {
+                Player winner = sortedScores.get(0).getKey();
+                broadcastTitle("§6" + winner.getName(), "§e1위 축하합니다!", 10, 70, 20);
 
-            if (plugin.isEnabled()) {
-                // 우승자 위치에서 폭죽 발사
-                Bukkit.getScheduler().runTaskLater(plugin, () -> {
-                    if (plugin.isEnabled()) {
-                        spawnFireworks(winner.getLocation(), 3);
-                    }
-                }, 40L); // 2초 후 폭죽 발사
+                if (plugin.isEnabled()) {
+                    // 우승자 위치에서 폭죽 발사
+                    Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                        if (plugin.isEnabled()) {
+                            spawnFireworks(winner.getLocation(), 3);
+                        }
+                    }, 40L); // 2초 후 폭죽 발사
+                }
             }
-
         }
     }
 
@@ -1206,6 +1267,20 @@ public abstract class Minigame {
     public void gameQuitPlayer(Player player) {
         if (players.remove(player)) {
             current_player--;
+            String team = playerTeams.remove(player);
+            if (team != null && teams.containsKey(team)) {
+                List<Player> teamPlayers = teams.get(team);
+                teamPlayers.remove(player);
+
+                // 디버그 메시지 추가
+                plugin.getLogger().info("Player " + player.getName() + " removed from team " + team + ". Team size: " + teamPlayers.size());
+
+                if (isTeamGame) {
+                    // 팀의 킬/데스 수 조정
+                    teamKills.put(team, teamKills.getOrDefault(team, 0) - kills.getOrDefault(player, 0));
+                    teamDeaths.put(team, teamDeaths.getOrDefault(team, 0) - deaths.getOrDefault(player, 0));
+                }
+            }
             plugin.setPlayerList(player, "로비");
             player.sendMessage(Prefix.SERVER + DISPLAY_GAME_NAME + " 게임에서 나가셨습니다.");
             player.setScoreboard(Bukkit.getScoreboardManager().getNewScoreboard());
@@ -1222,20 +1297,6 @@ public abstract class Minigame {
                 MinigamePenaltyManager.clearPlayerData(player.getUniqueId());
             }
 
-            if (isTeamGame) {
-                String team = getPlayerTeam(player);
-                // 팀의 킬/데스 수 조정
-                teamKills.put(team, teamKills.getOrDefault(team, 0) - kills.getOrDefault(player, 0));
-                teamDeaths.put(team, teamDeaths.getOrDefault(team, 0) - deaths.getOrDefault(player, 0));
-            }
-
-            // 팀에서 플레이어 제거
-            String team = playerTeams.remove(player);
-            if (team != null && teams.containsKey(team)) {
-                teams.get(team).remove(player);
-            }
-
-
             if (timerBossBar != null) {
                 timerBossBar.removePlayer(player);
             }
@@ -1249,6 +1310,11 @@ public abstract class Minigame {
             updateLobbyBossBar();
             teamChatEnabled.remove(player);
             checkTeamBalance();
+            // 디버그 메시지 추가
+            plugin.getLogger().info("Player " + player.getName() + " quit. Current player count: " + current_player);
+            for (Map.Entry<String, List<Player>> entry : teams.entrySet()) {
+                plugin.getLogger().info("Team " + entry.getKey() + " size: " + entry.getValue().size());
+            }
         }
     }
 
@@ -1323,7 +1389,12 @@ public abstract class Minigame {
                 String oldTeam = getPlayerTeam(player);
                 String newTeam = entry.getKey();
 
+                // assignPlayerToTeam 메소드 호출 시 teams 맵도 업데이트
                 assignPlayerToTeam(player, newTeam);
+                teams.get(newTeam).add(player);
+                if (oldTeam != null && !oldTeam.equals(newTeam)) {
+                    teams.get(oldTeam).remove(player);
+                }
 
                 // 플레이어의 점수, 킬/데스, 팀 채팅 상태 유지
                 scores.put(player, playerScores.getOrDefault(player, 0));
@@ -1420,28 +1491,28 @@ public abstract class Minigame {
     public void handlePlayerDeath(Player player) {
         Location deathLocation = player.getLocation();
         killStreakManager.resetKillStreak(player);
-        // 즉시 리스폰
-        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+
+        runTaskLater(() -> {
             player.spigot().respawn();
             player.setGameMode(GameMode.SPECTATOR);
             player.teleport(deathLocation);
 
             player.sendTitle("§c사망", "§e3초 후 리스폰됩니다", 10, 40, 10);
 
-            // 3초 후 리스폰 처리
-            Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            runTaskLater(() -> {
                 player.setGameMode(GameMode.SURVIVAL);
                 player.teleport(getRandomSpawnLocation(player));
-                player.getInventory().clear();
+                if (!itemDropAllowed) {
+                    player.getInventory().clear();
+                }
                 giveGameItems(player);
                 player.setHealth(player.getAttribute(Attribute.GENERIC_MAX_HEALTH).getValue());
 
-                player.setInvulnerable(true);
+                long invulnerableUntil = System.currentTimeMillis() + 2000; // 2초 동안 무적
+                invulnerablePlayers.put(player, invulnerableUntil);
 
-                // 원래 경험치 저장
                 float originalExp = player.getExp();
                 int originalLevel = player.getLevel();
-
 
                 new BukkitRunnable() {
                     int tick = 0;
@@ -1451,49 +1522,41 @@ public abstract class Minigame {
 
                     @Override
                     public void run() {
-                        if (tick >= 40) { // 2초 (40틱) 후 종료
-                            player.setInvulnerable(false);
+                        if (tick >= 40) {
+                            invulnerablePlayers.remove(player);
                             player.setGlowing(false);
-                            // 원래 경험치 복원
                             player.setExp(originalExp);
                             player.setLevel(originalLevel);
-                            this.cancel();
+                            this.cancel(); // 변경된 부분: cancelTask 대신 this.cancel() 사용
                             return;
                         }
 
-                        // 경험치 바로 타이머 표현
                         float remainingTime = (float)(INVULNERABLE_TICKS - tick) / INVULNERABLE_TICKS;
                         player.setExp(remainingTime);
-                        player.setLevel(2 - tick / 20); // 초 단위로 표시
+                        player.setLevel(2 - tick / 20);
 
-                        // 파티클 효과 (줄어든 양)
                         Location particleLoc = player.getLocation().add(0, 1, 0);
                         player.getWorld().spawnParticle(Particle.TOTEM_OF_UNDYING, particleLoc, 5, 0.5, 0.5, 0.5, 0.05);
                         player.getWorld().spawnParticle(Particle.END_ROD, particleLoc, 3, 0.3, 0.3, 0.3, 0.02);
 
-
-                        // 무지개 색상 변경 효과
                         if (tick % 4 == 0) {
                             colorIndex = (colorIndex + 1) % colors.length;
-                            player.setGlowing(true);
-                            // 여기서는 실제로 색상을 변경할 수 없지만, 시각적 효과를 위해 Glowing 효과를 토글합니다.
                             player.setGlowing(tick % 8 == 0);
                         }
 
-                        // 사운드 효과
                         if (tick % 10 == 0) {
                             player.playSound(player.getLocation(), Sound.BLOCK_NOTE_BLOCK_CHIME, 0.5f, 1.0f);
                         }
 
-                        player.spigot().sendMessage(net.md_5.bungee.api.ChatMessageType.ACTION_BAR,
-                                net.md_5.bungee.api.chat.TextComponent.fromLegacyText("§6" + (2 - tick / 20) + "초동안 무적 상태입니다."));
+                        player.sendActionBar(Component.text((2 - tick / 20) + "초동안 무적 상태입니다.").color(NamedTextColor.GOLD));
                         tick++;
                     }
                 }.runTaskTimer(plugin, 0L, 1L);
 
-            }, 60L); // 3초
-        }, 1L); // 다음 틱에 실행
+            }, 60L);
+        }, 1L);
     }
+
     // 유틸리티 메서드
     public void broadcastToPlayers(Component message) {
         for (Player player : players) {
@@ -1572,11 +1635,6 @@ public abstract class Minigame {
         PlayerInventory playerInventory = player.getInventory();
         playerInventory.clear();
         playerInventory.setArmorContents(null);
-
-        playerInventory.clear(80);
-        playerInventory.clear(81);
-        playerInventory.clear(82);
-        playerInventory.clear(83);
 
         player.setHealth(player.getAttribute(Attribute.GENERIC_MAX_HEALTH).getValue());
         player.setFoodLevel(20);
@@ -1784,14 +1842,57 @@ public abstract class Minigame {
         plugin.getLogger().info("설정되지 않은 맵: " + unsetMaps);
         return unsetMaps;
     }
+
     // 연속 킬
     public void handlePlayerKill(Player killer, Player victim) {
+        addKill(killer);
+        addDeath(victim);
         killStreakManager.handleKill(killer, victim);
+        updateScoreboard();
     }
 
-    public void handleDamage(Player attacker, Player victim, double damage) {
-        if (victim.getHealth() - damage <= 0) {
+    public boolean isPlayerInvulnerable(Player player) {
+        Long invulnerableUntil = invulnerablePlayers.get(player);
+        if (invulnerableUntil != null) {
+            if (System.currentTimeMillis() < invulnerableUntil) {
+                return true;
+            } else {
+                invulnerablePlayers.remove(player);
+            }
+        }
+        return false;
+    }
+
+    public boolean isAxe(Material material) {
+        return material == Material.WOODEN_AXE || material == Material.STONE_AXE ||
+                material == Material.IRON_AXE || material == Material.GOLDEN_AXE ||
+                material == Material.DIAMOND_AXE;
+    }
+
+    public void handleDamage(Player attacker, Player victim, EntityDamageByEntityEvent event) {
+        // 무적 상태 체크
+        if (isPlayerInvulnerable(victim)) {
+            event.setCancelled(true);
+            attacker.sendMessage(Component.text(Prefix.SERVER + "이 플레이어는 현재 무적 상태입니다."));
+            return;
+        }
+
+        // 팀 체크
+        if (isTeamGame && getPlayerTeam(attacker).equals(getPlayerTeam(victim))) {
+            event.setCancelled(true);
+            attacker.sendMessage(Component.text(Prefix.SERVER + "팀원을 공격할 수 없습니다!"));
+            return;
+        }
+
+        // 도끼 공격력 감소
+        if (isAxe(attacker.getInventory().getItemInMainHand().getType())) {
+            event.setDamage(event.getDamage() - 3);
+        }
+
+        double finalDamage = event.getFinalDamage();
+        if (victim.getHealth() - finalDamage <= 0) {
             // 피해자가 이 공격으로 사망할 경우
+            // 킬, 데스 추가
             handlePlayerKill(attacker, victim);
         }
     }
@@ -1906,6 +2007,10 @@ public abstract class Minigame {
 
     public TeamType getTeamType() { return teamType; }
 
+    public boolean getUseBlockRestore() {
+        return useBlockRestore;
+    }
+
     public boolean isBlockBreakAllowed() { return blockBreakAllowed; }
     public boolean isBlockPlaceAllowed() { return blockPlaceAllowed; }
     public boolean isItemDropAllowed() { return itemDropAllowed; }
@@ -1989,17 +2094,16 @@ public abstract class Minigame {
     }
 
     // 적군 리스트를 가져오는 메소드
-    public List<Player> getEnemyList(String playerTeam) {
+    public List<Player> getEnemyList(Player player) {
+        String playerTeam = getPlayerTeam(player);
         List<Player> enemies = new ArrayList<>();
         for (Map.Entry<String, List<Player>> entry : teams.entrySet()) {
-            // 자신의 팀이 아닌 팀을 찾습니다.
             if (!entry.getKey().equals(playerTeam)) {
                 enemies.addAll(entry.getValue());
             }
         }
         return enemies;
     }
-
     // 특정 팀의 모든 멤버를 가져오는 메소드 : 팀1, 팀2 .. 의 멤버 등
     public List<Player> getTeamMembers(String team) {
         return teams.getOrDefault(team, new ArrayList<>());
@@ -2013,6 +2117,40 @@ public abstract class Minigame {
         return teammates;
     }
 
+    private class BlockModificationListener implements Listener {
+        @EventHandler
+        public void onBlockBreak(BlockBreakEvent event) {
+            if (!blockBreakAllowed) return;
+            Player player = event.getPlayer();
+            Block block = event.getBlock();
+            String currentMap = getCurrentMap();
+            if (currentMap == null) {
+                player.sendMessage(Prefix.SERVER + "현재 맵이 설정되지 않았습니다.");
+                event.setCancelled(true);
+                return;
+            }
+            if (!blockRestoreManager.isInRestoreRegion(COMMAND_MAIN_NAME, currentMap, block.getLocation())) {
+                event.setCancelled(true);
+                player.sendMessage(Prefix.SERVER + "이 영역에서는 블록을 파괴할 수 없습니다.");
+            }
+        }
+        @EventHandler
+        public void onBlockPlace(BlockPlaceEvent event) {
+            if (!blockPlaceAllowed) return;
+            Player player = event.getPlayer();
+            Block block = event.getBlock();
+            String currentMap = getCurrentMap();
+            if (currentMap == null) {
+                player.sendMessage(Prefix.SERVER + "현재 맵이 설정되지 않았습니다.");
+                event.setCancelled(true);
+                return;
+            }
+            if (!blockRestoreManager.isInRestoreRegion(COMMAND_MAIN_NAME, currentMap, block.getLocation())) {
+                event.setCancelled(true);
+                player.sendMessage(Prefix.SERVER + "이 영역에서는 블록을 설치할 수 없습니다.");
+            }
+        }
+    }
 
 
 }

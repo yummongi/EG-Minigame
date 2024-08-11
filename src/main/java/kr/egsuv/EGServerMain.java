@@ -11,7 +11,7 @@ import kr.egsuv.listeners.*;
 import kr.egsuv.commands.CommandManager;
 import kr.egsuv.minigames.*;
 import kr.egsuv.minigames.games.firsthit.FirstHitGame;
-import kr.egsuv.minigames.games.godofwar.WarOfGodGame;
+import kr.egsuv.minigames.games.warofgod.WarOfGodGame;
 import kr.egsuv.minigames.games.spleef.SpleefGame;
 import kr.egsuv.minigames.games.teamdeathmatch.TeamDeathmatchGame;
 import kr.egsuv.ranking.RankingManager;
@@ -79,7 +79,7 @@ public final class EGServerMain extends JavaPlugin implements Listener {
             getLogger().info("BlockRestoreManager 초기화 상태:");
             getLogger().info("gameMapRegions: " + blockRestoreManager.getGameMapRegions());
             getLogger().info("gameMapCenters: " + blockRestoreManager.getGameMapCenters());
-        }, 40L); // 1초 후에 실행 (서버가 완전히 로드된 후)
+        }, 20L); // 1초 후에 실행 (서버가 완전히 로드된 후)
 
         MinigamePenaltyManager.startCleanupTask(this);
 
@@ -147,10 +147,12 @@ public final class EGServerMain extends JavaPlugin implements Listener {
     private void registerCommands() {
         // 명령어 등록
 
-        commandManager.registerCommand(spawnCommand, "스폰", "spawn");
+        commandManager.registerCommand(spawnCommand, "스폰", "spawn", "넴주", "tmvhs");
         commandManager.registerCommand(new TimeCommand(), "time", "시간");
         commandManager.registerCommand(new MegaphoneCommand(), "확성기", "메아리", "megaphone");
-        commandManager.registerCommand(new MinigameCommand(), "minigame", "game");
+        commandManager.registerCommand(new MinigameCommand(), "minigame", "game", "mg");
+        commandManager.registerCommand(new TeamChatCommand(), "tc", "teamchat", "팀챗", "팀", "team");
+        commandManager.registerCommand(new WhisperCommand(), "귓", "w", "whisper", "rnlt");
 
         // TabCompleter 등록
         CommandTabCompleter commandTabCompleter = new CommandTabCompleter();
@@ -173,9 +175,10 @@ public final class EGServerMain extends JavaPlugin implements Listener {
                 new PlayerJoinListener(new SpawnCommand(miniGamesGui), minigameList),
                 new PlayerQuitListener(minigameList),
                 new PlayerDamageListener(),
-                new NoDropOrMoveListener(),
+                new GlobalEventListener(),
                 new CustomGUIListener(),
                 new PlayerDeathListener()
+
         );
 
         for (Listener listener : listeners) {
